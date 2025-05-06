@@ -45,3 +45,14 @@ The app includes sample data files for demonstration purposes:
 - `utils.py`: Utility functions for data loading and processing
 - `*.py`: Feature-specific modules (AI task redistribution, leave conflict detection, etc.)
 - `.streamlit/`: Configuration files for Streamlit
+- `logo_AI_PM_Buddy.png` and `logo_AI_PM_Buddy_dark.png`: Brand logos for light and dark modes
+- `assets/`: Additional assets directory containing logos
+
+## Important Notes for Deployment
+
+### Logo Files
+The application looks for logo files in multiple locations:
+1. Root directory (`logo_AI_PM_Buddy.png` and `logo_AI_PM_Buddy_dark.png`)
+2. `assets/` folder (`assets/logo_AI_PM_Buddy.png` and `assets/logo_AI_PM_Buddy_dark.png`)
+
+When deploying, ensure at least one set of these files is included. The application has fallback mechanisms if some locations aren't available, but for the best experience, keep the logos in both locations.

@@ -1,11 +1,11 @@
-# JIRA Resource Management App with AI PM Buddy
+# AI PM Buddy - Advanced Project Management Assistant
 # Integrated application that combines visualization dashboards with AI-powered project management assistant
 
 import streamlit as st
 
 # Page configuration and title must come before any other Streamlit commands
 st.set_page_config(
-    page_title="JIRA Resource Management App",
+    page_title="AI PM Buddy",
     page_icon="📊",
     layout="wide"
 )
@@ -80,8 +80,57 @@ def append_to_feedback_history(entry):
 
 # ---------- Sidebar ----------
 with st.sidebar:
-    st.title("JIRA Resource App")
-    st.image("https://cdn-icons-png.flaticon.com/512/5968/5968875.png", width=100)
+    st.title("AI PM Buddy")
+    
+    # Try to load the custom logo based on theme, with fallback to emoji if files not found
+    try:
+        # Choose logo based on current theme
+        if 'theme' in st.session_state and st.session_state.theme == "dark":
+            logo_path = "logo_AI_PM_Buddy_dark.png"
+        else:
+            logo_path = "logo_AI_PM_Buddy.png"
+            
+        # Check for logo in multiple possible locations
+        possible_locations = [
+            logo_path,                                 # Root directory
+            os.path.join('.', logo_path),             # Explicit current directory
+            os.path.join('assets', logo_path),        # In assets folder
+            os.path.join('attached_assets', logo_path) # In attached_assets folder
+        ]
+        
+        logo_found = False
+        for location in possible_locations:
+            if os.path.exists(location):
+                st.image(location, width=180)
+                logo_found = True
+                break
+                
+        if not logo_found:
+            # If preferred theme logo not found, try the other logo
+            alternate_logo = "logo_AI_PM_Buddy.png" if logo_path == "logo_AI_PM_Buddy_dark.png" else "logo_AI_PM_Buddy_dark.png"
+            
+            # Check alternate logo in multiple locations
+            for alt_location in [
+                alternate_logo,
+                os.path.join('.', alternate_logo),
+                os.path.join('assets', alternate_logo),
+                os.path.join('attached_assets', alternate_logo)
+            ]:
+                if os.path.exists(alt_location):
+                    st.image(alt_location, width=180)
+                    print(f"Using alternate logo: {alt_location}")
+                    logo_found = True
+                    break
+                    
+            if not logo_found:
+                # If no logo files found, use emoji fallback
+                st.markdown("### 🤖📊")
+                st.info("Logo files not found")
+    except Exception as e:
+        # In case of any other error, use emoji as fallback
+        st.markdown("### 🤖📊")
+        print(f"Error loading logo: {e}")
+
     
     # Theme toggle for dark/light mode
     if 'theme' not in st.session_state:
@@ -148,34 +197,36 @@ font = "sans serif"
             uploaded_file = open(fallback_file, "rb")
             st.sidebar.success("Loaded default file: enriched_jira_data_with_simulated.xlsx")
 
-    # ---------- Download Deployment Package ----------
+    # Deployment package download options - at the bottom of the sidebar
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Project Deployment")
-
-    # Verify the zip file exists before showing the download button
-    cloud_zip_file_path = "jira_resource_management_cloud_deploy.zip"
+    st.sidebar.markdown("##### Application Downloads")
+    
+    # Check if zip files exist before showing download buttons
+    col1, col2 = st.sidebar.columns(2)
+    
+    cloud_zip_file_path = "ai_pm_buddy_cloud_deploy.zip"
     if os.path.exists(cloud_zip_file_path):
         with open(cloud_zip_file_path, "rb") as fp:
             cloud_zip_data = fp.read()
-        st.sidebar.download_button(
-            label="📥 Download Cloud Deployment Package",
+        col1.download_button(
+            label="☁️ Cloud Deploy",
             data=cloud_zip_data,
-            file_name="jira_resource_management_cloud_deploy.zip",
+            file_name="ai_pm_buddy_cloud_deploy.zip",
             mime="application/zip",
-            help="Download a ZIP file containing all the project files for Streamlit Cloud deployment"
+            help="Download files for Streamlit Cloud deployment"
         )
 
-    # Keep original deployment package if it exists
-    zip_file_path = "jira_resource_management_app.zip"
+    # Full deployment package
+    zip_file_path = "ai_pm_buddy_app.zip"
     if os.path.exists(zip_file_path):
         with open(zip_file_path, "rb") as fp:
             zip_data = fp.read()
-        st.sidebar.download_button(
-            label="📥 Download Full Deployment Package",
+        col2.download_button(
+            label="📦 Full Deploy",
             data=zip_data,
-            file_name="jira_resource_management_app.zip",
+            file_name="ai_pm_buddy_app.zip",
             mime="application/zip",
-            help="Download a ZIP file containing all the project files for deployment"
+            help="Download all project files for deployment"
         )
 
 # ---------- Load Data ----------
@@ -287,7 +338,7 @@ with st.sidebar:
         "🎯 Resource Management",
         "📆 Planning & Scheduling",
         "🚨 Risk Management",
-        "🤖 AI Assistant"
+        "🤖 Strateg-AIz"
     ]
     
     nav_selection = st.radio("Navigation", nav_options)
@@ -1413,14 +1464,14 @@ def pm_daily_brief():
     """
     st.download_button("📄 Download Brief as TXT", brief, file_name="PM_Daily_Brief.txt")
 
-# ---------- Define AI PM Buddy Assistant Function ----------
+# ---------- Define Strateg-AIz Assistant Function ----------
 def ai_pm_buddy_assistant():
-    st.title("🤖 AI PM Buddy")
+    st.title("🤖 Strateg-AIz")
     
     # Reference global variables
     global issues_df, skills_df, worklogs_df, leaves_df
     
-    # Set up tabs for different PM Buddy features
+    # Set up tabs for different Strateg-AIz features
     ai_tabs = st.tabs(["Ask PM Buddy", "Smart PM Brief", "What-if Simulation", "Buddy Brain", "Doc Dock"])
     
     # Use the global OpenAI client
@@ -3338,7 +3389,9 @@ if nav_selection == "🎯 Resource Management":
                         title="Team Skill Distribution",
                         hole=0.4
                     )
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_90hud5jqf2")
+                    chart_id = f"skill_pie_{st.session_state.get('chart_counter', 0)}"
+                    st.session_state['chart_counter'] = st.session_state.get('chart_counter', 0) + 1
+                    st.plotly_chart(fig, use_container_width=True, key=chart_id)
                     
                     # Resources per skill
                     st.subheader("Resources per Skill")
@@ -3352,7 +3405,9 @@ if nav_selection == "🎯 Resource Management":
                         color='Skill',
                         title="Number of Resources per Skill"
                     )
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_t6v82o3q74")
+                    chart_id = f"resource_skill_{st.session_state.get('chart_counter', 0)}"
+                    st.session_state['chart_counter'] = st.session_state.get('chart_counter', 0) + 1
+                    st.plotly_chart(fig, use_container_width=True, key=chart_id)
                     
                     # Skills inventory table
                     st.subheader("Skills Inventory")
@@ -3393,7 +3448,9 @@ if nav_selection == "🎯 Resource Management":
                                     color='Proficiency',
                                     color_continuous_scale='Viridis'
                                 )
-                                st.plotly_chart(fig, use_container_width=True, key="plotly_ze3rphcy4u")
+                                chart_id = f"skill_prof_{skill}_{st.session_state.get('chart_counter', 0)}"
+                                st.session_state['chart_counter'] = st.session_state.get('chart_counter', 0) + 1
+                                st.plotly_chart(fig, use_container_width=True, key=chart_id)
                             else:
                                 st.info(f"No proficiency data available for {skill} skills.")
                 
@@ -3441,7 +3498,9 @@ if nav_selection == "🎯 Resource Management":
                         yshift=10,
                         xshift=100
                     )
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_8qs4wjaxyd")
+                    chart_id = f"skill_coverage_{st.session_state.get('chart_counter', 0)}"
+                    st.session_state['chart_counter'] = st.session_state.get('chart_counter', 0) + 1
+                    st.plotly_chart(fig, use_container_width=True, key=chart_id)
                     
                     # Recommendations section
                     st.subheader("Skill Gap Recommendations")
@@ -4190,8 +4249,8 @@ elif nav_selection == "🚨 Risk Management":
                 st.warning("No issue data available with current filters.")
 
 
-# ---------- 5. AI ASSISTANT SECTION ----------
-elif nav_selection == "🤖 AI Assistant":
+# ---------- 5. STRATEG-AIZ SECTION ----------
+elif nav_selection == "🤖 Strateg-AIz":
     # Call the AI PM Buddy Assistant
     ai_pm_buddy_assistant()
 

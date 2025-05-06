@@ -12,16 +12,9 @@ import json
 import openai
 import os
 from openai import OpenAI
-try:
-    import networkx as nx
-    import matplotlib.pyplot as plt
-    NETWORK_VISUALIZATION_AVAILABLE = True
-except ImportError:
-    NETWORK_VISUALIZATION_AVAILABLE = False
-    # Define fallback function for dependency visualization if networkx is not available
-    def visualize_dependencies(G, critical_path=None):
-        """Fallback function when networkx is not available"""
-        return "Dependency visualization requires networkx and matplotlib libraries."
+import networkx as nx
+import matplotlib.pyplot as plt
+NETWORK_VISUALIZATION_AVAILABLE = True
 import io
 import base64
 from PIL import Image
@@ -290,9 +283,6 @@ def analyze_task_dependencies(active_issues, dependencies_df=None):
 
 def visualize_dependencies(G, critical_path=None):
     """Create a visualization of task dependencies with critical path highlighted"""
-    if not NETWORK_VISUALIZATION_AVAILABLE:
-        return None
-        
     if not G or len(G.nodes) == 0:
         return None
     
@@ -313,7 +303,7 @@ def visualize_dependencies(G, critical_path=None):
         nx.draw_networkx_edges(G, pos, width=1.0, arrowsize=20)
         
         # Add edge labels (dependency types)
-        edge_labels = {(u, v): d['type'] for u, v, d in G.edges(data=True)}
+        edge_labels = {(u, v): d.get('type', '') for u, v, d in G.edges(data=True)}
         nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
         
         # Add node labels
@@ -332,14 +322,15 @@ def visualize_dependencies(G, critical_path=None):
         plt.axis('off')
         
         # Save figure to a bytes buffer
-        buf = io.BytesIO()
+        from io import BytesIO
+        buf = BytesIO()
         plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
         buf.seek(0)
         plt.close()
         
-        # Convert to base64 for Streamlit
-        img = Image.open(buf)
-        return img
+        # Convert buffer to base64 for Streamlit
+        data = base64.b64encode(buf.getvalue()).decode("utf-8")
+        return f"data:image/png;base64,{data}"
     except Exception as e:
         import streamlit as st
         st.warning(f"Could not create dependency visualization: {str(e)}")

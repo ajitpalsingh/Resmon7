@@ -303,22 +303,33 @@ def safe_line_chart(data_frame, x, y, **kwargs):
         # Check if we're using a color column
         if 'color' in kwargs:
             color_col = kwargs['color']
-            # Get unique values in the color column
-            color_groups = data_frame[color_col].unique()
-            
-            # Add a trace for each color group
-            for i, group in enumerate(color_groups):
-                group_data = data_frame[data_frame[color_col] == group]
-                color_idx = i % len(color_sequence)
+            # Make sure the color column exists before trying to access it
+            if color_col in data_frame.columns:
+                # Get unique values in the color column
+                color_groups = data_frame[color_col].unique()
                 
-                # Add scatter trace with lines and markers
+                # Add a trace for each color group
+                for i, group in enumerate(color_groups):
+                    group_data = data_frame[data_frame[color_col] == group]
+                    color_idx = i % len(color_sequence)
+                    
+                    # Add scatter trace with lines and markers
+                    fig.add_trace(go.Scatter(
+                        x=group_data[x],
+                        y=group_data[y],
+                        mode='lines+markers' if kwargs.get('markers', False) else 'lines',
+                        name=str(group),
+                        line=dict(color=color_sequence[color_idx]),
+                        marker=dict(color=color_sequence[color_idx])
+                    ))
+            else:
+                # If the color column doesn't exist, create a simple line chart
                 fig.add_trace(go.Scatter(
-                    x=group_data[x],
-                    y=group_data[y],
+                    x=data_frame[x],
+                    y=data_frame[y],
                     mode='lines+markers' if kwargs.get('markers', False) else 'lines',
-                    name=str(group),
-                    line=dict(color=color_sequence[color_idx]),
-                    marker=dict(color=color_sequence[color_idx])
+                    line=dict(color=color_sequence[0]),
+                    marker=dict(color=color_sequence[0])
                 ))
         else:
             # Simple line chart without color groups
@@ -344,43 +355,72 @@ def safe_line_chart(data_frame, x, y, **kwargs):
         
         return fig
 
-def style_plotly_chart(fig, title=None, height=None):
+def style_plotly_chart(fig, title=None, height=None, chart_type="default"):
     """Apply consistent styling to Plotly charts based on current theme"""
+    # Import visualization enhancements 
+    from visualization_enhancements import optimize_chart_layout, enhance_chart_for_dark_mode
+    from visualization_enhancements import improve_sprint_burnup_chart, improve_task_distribution_chart
+    from visualization_enhancements import improve_gantt_chart, improve_bubble_chart
+
     colors = get_color_palette()
     
-    # Apply title if provided
+    # Apply title if provided with improved positioning
     if title:
-        fig.update_layout(title=title)
+        fig.update_layout(
+            title=dict(
+                text=title,
+                font=dict(size=18, color=colors['text']),
+                y=0.98,  # Slightly lower from top
+                x=0.5,   # Centered
+                xanchor='center',
+                yanchor='top'
+            )
+        )
         
-    # Set height if provided
+    # Set height if provided, with minimum to prevent squashing
     if height:
-        fig.update_layout(height=height)
+        fig.update_layout(height=max(height, 350))
+    else:
+        fig.update_layout(height=400)  # Default height if none provided
     
     # Explicitly set the template to None first to avoid conflicts
     fig.update_layout(template=None)
     
-    # Apply theme-based styling
+    # Apply theme-based styling with improved margins
     fig.update_layout(
         font=dict(
-            family="sans-serif",
-            size=12,
+            family="Helvetica, Arial, sans-serif",  # More readable font
+            size=13,  # Slightly larger font
             color=colors['text']
         ),
         plot_bgcolor=colors['background'],
         paper_bgcolor=colors['background'],
-        title_font=dict(size=16, color=colors['text']),
-        legend=dict(font=dict(color=colors['text'])),
-        margin=dict(l=10, r=10, t=40, b=0),
+        title_font=dict(size=18, color=colors['text']),
+        legend=dict(
+            font=dict(color=colors['text'], size=12),
+            bgcolor=colors['background'],
+            bordercolor=colors['grid'],
+            borderwidth=1
+        ),
+        # Increased margins to prevent label cropping
+        margin=dict(l=70, r=50, t=80, b=80),
+        hovermode="closest"
     )
     
-    # Style axes
+    # Style axes with improved label positioning
     fig.update_xaxes(
         gridcolor=colors['grid'],
         linecolor=colors['grid'],
         zeroline=True,
         zerolinecolor=colors['grid'],
-        tickfont=dict(color=colors['text']),
-        color=colors['text']
+        tickfont=dict(color=colors['text'], size=11),
+        title_font=dict(color=colors['text'], size=13),
+        title_standoff=30,  # More space for axis title
+        tickangle=0,  # Default horizontal ticks
+        color=colors['text'],
+        showline=True,
+        showticklabels=True,
+        mirror=True
     )
     
     fig.update_yaxes(
@@ -388,9 +428,31 @@ def style_plotly_chart(fig, title=None, height=None):
         linecolor=colors['grid'],
         zeroline=True,
         zerolinecolor=colors['grid'],
-        tickfont=dict(color=colors['text']),
-        color=colors['text']
+        tickfont=dict(color=colors['text'], size=11),
+        title_font=dict(color=colors['text'], size=13),
+        title_standoff=30,  # More space for axis title
+        color=colors['text'],
+        showline=True,
+        showticklabels=True,
+        mirror=True
     )
+    
+    # Apply chart-specific optimizations
+    fig = optimize_chart_layout(fig, chart_type=chart_type, colors=colors)
+    
+    # Apply specific improvements based on chart type
+    if chart_type == "burnup":
+        fig = improve_sprint_burnup_chart(fig, colors)
+    elif chart_type == "task_distribution":
+        fig = improve_task_distribution_chart(fig, colors)
+    elif chart_type == "gantt":
+        fig = improve_gantt_chart(fig, colors)
+    elif chart_type == "bubble":
+        fig = improve_bubble_chart(fig, colors)
+    
+    # Apply dark mode specific enhancements
+    if 'theme' in st.session_state and st.session_state.theme == "dark":
+        fig = enhance_chart_for_dark_mode(fig, colors)
     
     return fig
 
@@ -837,23 +899,13 @@ if nav_selection == "📊 Dashboard":
                             hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Total: <b>%{y:.1f}</b> points<extra></extra>'
                         ))
                         
-                        # Apply consistent styling
+                        # Apply consistent styling with burnup-specific enhancements
                         sprint_title = f'Sprint Burnup Chart{" for " + filters["sprint"] if filters["sprint"] != "All Sprints" else ""}'
-                        fig = style_plotly_chart(fig, title=sprint_title, height=400)
+                        fig = style_plotly_chart(fig, title=sprint_title, height=400, chart_type="burnup")
                         
-                        # Additional layout improvements
-                        fig.update_layout(
-                            xaxis_title='Date', 
-                            yaxis_title='Story Points',
-                            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-                            hovermode='x unified',
-                            xaxis=dict(
-                                tickformat='%b %d',
-                                tickangle=-45,
-                                tickmode='auto',
-                                nticks=10
-                            )
-                        )
+                        # Use fix_axis_labels from visualization_enhancements to improve label positioning
+                        from visualization_enhancements import fix_axis_labels
+                        fig = fix_axis_labels(fig, x_title='Date', y_title='Story Points', colors=colors)
                         
                         # Add today marker with improved visibility
                         current_completed = burnup_data[burnup_data['Date'] <= current_date]['Completed'].iloc[-1] if not burnup_data[burnup_data['Date'] <= current_date].empty else 0
@@ -994,15 +1046,12 @@ if nav_selection == "📊 Dashboard":
                                     hovertemplate='<b>%{hovertext}</b><br>Story Points: <b>%{x}</b><br>Hours: <b>%{y:.1f}</b><br>Size: <b>%{marker.size:.1f}</b> hrs<extra></extra>'
                                 )
                                 
-                                # Apply consistent styling
-                                fig = style_plotly_chart(fig, title='Workload vs. Velocity Analysis', height=350)
+                                # Apply consistent styling with bubble chart-specific enhancements
+                                fig = style_plotly_chart(fig, title='Workload vs. Velocity Analysis', height=350, chart_type="bubble")
                                 
-                                # Additional layout improvements
-                                fig.update_layout(
-                                    xaxis_title='Story Points Delivered', 
-                                    yaxis_title='Hours Logged',
-                                    legend=dict(orientation='h', yanchor='bottom', y=-0.2, xanchor='center', x=0.5)
-                                )
+                                # Use fix_axis_labels from visualization_enhancements to improve label positioning
+                                from visualization_enhancements import fix_axis_labels
+                                fig = fix_axis_labels(fig, x_title='Story Points Delivered', y_title='Hours Logged', colors=colors)
                                 
                                 # Add reference line for average ratio
                                 if len(merged) > 0:
@@ -1074,26 +1123,32 @@ if nav_selection == "📊 Dashboard":
                         marker=dict(line=dict(width=1, color=colors['background']))
                     )
                     
-                    # Apply consistent styling
+                    # Apply consistent styling with Gantt-specific enhancements
                     title = f"Timeline for {filters['project'] if filters['project'] != 'All Projects' else 'All Projects'}{' - ' + filters['sprint'] if filters['sprint'] != 'All Sprints' else ''}"
-                    fig = style_plotly_chart(fig, title=title, height=400)
+                    fig = style_plotly_chart(fig, title=title, height=400, chart_type="gantt")
                     
-                    # Format axes better
+                    # Use fix_axis_labels from visualization_enhancements to improve label positioning
+                    from visualization_enhancements import fix_axis_labels
+                    fig = fix_axis_labels(fig, x_title='Timeline', y_title='Team Member', colors=colors)
+                    
+                    # Add date selector for timeline
                     today = pd.Timestamp(datetime.now()).normalize()
                     fig.update_layout(
                         xaxis=dict(
-                            title="Timeline",
                             tickformat="%b %d",
                             rangeselector=dict(
                                 buttons=list([
                                     dict(count=1, label="1m", step="month", stepmode="backward"),
                                     dict(count=3, label="3m", step="month", stepmode="backward"),
                                     dict(step="all")
-                                ])
+                                ]),
+                                bgcolor=colors['background'],
+                                bordercolor=colors['grid'],
+                                borderwidth=1,
+                                font=dict(color=colors['text'])
                             )
                         ),
                         yaxis=dict(
-                            title="Team Member",
                             autorange="reversed"
                         )
                     )
@@ -2684,6 +2739,9 @@ def ai_pm_buddy_assistant():
                 st.markdown("### Priority Shift Simulation")
                 st.markdown("Analyze the impact of shifting priorities between different user stories and tasks.")
                 
+                # Initialize priority_changes variable at the start of this section
+                priority_changes = []
+                
                 # Get available projects and tasks for prioritization
                 if issues_df is not None:
                     if 'Project' in issues_df.columns:
@@ -2780,62 +2838,85 @@ def ai_pm_buddy_assistant():
                                 resource_impact = ""
                                 critical_tasks = ""
                                 
-                                if issues_df is not None and 'Project' in issues_df.columns:
-                                        for project in selected_projects:
-                                            project_tasks = issues_df[issues_df['Project'] == project]
-                                            task_count = len(project_tasks)
+                                # Define shift_all_tasks variable with default value
+                                shift_all_tasks = True
+                                
+                                # Get list of projects from the priority changes
+                                selected_projects = []
+                                for change in priority_changes:
+                                    if 'Issue Key' in change:
+                                        issue_key = change['Issue Key']
+                                        # Find project for this issue key
+                                        if issues_df is not None and 'Issue Key' in issues_df.columns and 'Project' in issues_df.columns:
+                                            project_row = issues_df[issues_df['Issue Key'] == issue_key]
+                                            if not project_row.empty and 'Project' in project_row.columns:
+                                                project = project_row['Project'].iloc[0]
+                                                if project not in selected_projects:
+                                                    selected_projects.append(project)
+                                
+                                if issues_df is not None and 'Project' in issues_df.columns and selected_projects:
+                                    for project in selected_projects:
+                                        project_tasks = issues_df[issues_df['Project'] == project]
+                                        task_count = len(project_tasks)
+                                        
+                                        if task_count > 0:
+                                            # Generate table of affected tasks
+                                            affected_projects_tasks += f"\n### {project} - {task_count} Tasks Affected\n\n"
+                                            affected_projects_tasks += "| Task ID | Summary | Current Priority | New Priority | Status |\n| --- | --- | --- | --- | --- |\n"
                                             
-                                            if task_count > 0:
-                                                # Generate table of affected tasks
-                                                affected_projects_tasks += f"\n### {project} - {task_count} Tasks Affected\n\n"
-                                                affected_projects_tasks += "| Task ID | Summary | Current Priority | New Priority | Status |\n| --- | --- | --- | --- | --- |\n"
+                                            # Get current project priority change for this project
+                                            issue_keys_in_project = project_tasks['Issue Key'].tolist()
+                                            project_changes = [p for p in priority_changes if p.get('Issue Key') in issue_keys_in_project]
+                                            
+                                            # Use the first change as a representative for the project
+                                            if project_changes:
+                                                current_priority = project_changes[0].get('Current', 'Unknown')
+                                                new_priority = project_changes[0].get('New', 'Unknown')
+                                            else:
+                                                current_priority = "Unknown"
+                                                new_priority = "Unknown"
+                                            
+                                            # Add up to 5 tasks from this project
+                                            for _, task in project_tasks.head(5).iterrows():
+                                                task_id = task['Issue Key'] if 'Issue Key' in task else "Unknown"
+                                                summary = task['Summary'] if 'Summary' in task else "Unknown"
+                                                task_priority = task['Priority'] if 'Priority' in task else "Unknown"
+                                                status = task['Status'] if 'Status' in task else "Unknown"
                                                 
-                                                # Get current project priority change
-                                                project_change = next((p for p in priority_changes if p['Project'] == project), None)
-                                                current_priority = project_change['Current'] if project_change else "Unknown"
-                                                new_priority = project_change['New'] if project_change else "Unknown"
+                                                # Only change individual task priorities if shift_all_tasks is True
+                                                task_new_priority = new_priority if shift_all_tasks else task_priority
                                                 
-                                                # Add up to 5 tasks from this project
-                                                for _, task in project_tasks.head(5).iterrows():
-                                                    task_id = task['Issue Key'] if 'Issue Key' in task else "Unknown"
-                                                    summary = task['Summary'] if 'Summary' in task else "Unknown"
-                                                    task_priority = task['Priority'] if 'Priority' in task else "Unknown"
-                                                    status = task['Status'] if 'Status' in task else "Unknown"
-                                                    
-                                                    # Only change individual task priorities if shift_all_tasks is True
-                                                    task_new_priority = new_priority if shift_all_tasks else task_priority
-                                                    
-                                                    affected_projects_tasks += f"| {task_id} | {summary} | {task_priority} | {task_new_priority} | {status} |\n"
+                                                affected_projects_tasks += f"| {task_id} | {summary} | {task_priority} | {task_new_priority} | {status} |\n"
+                                            
+                                            # Add resource impact for this project
+                                            if adjust_resources:
+                                                resource_impact += f"\n### Resource Impact for {project}\n"
                                                 
-                                                # Add resource impact for this project
-                                                if adjust_resources:
-                                                    resource_impact += f"\n### Resource Impact for {project}\n"
-                                                    
-                                                    # Calculate simplified resource adjustment
-                                                    priority_increase = ['Highest', 'High', 'Medium', 'Low', 'Lowest'].index(current_priority) > ['Highest', 'High', 'Medium', 'Low', 'Lowest'].index(new_priority)
-                                                    
-                                                    if priority_increase:
-                                                        resource_impact += f"- **Increased Resource Need**: {project} priority increased from {current_priority} to {new_priority}\n"
-                                                        resource_impact += f"- Recommended additional allocation: +20% for the {task_count} affected tasks\n"
-                                                    else:
-                                                        resource_impact += f"- **Decreased Resource Need**: {project} priority decreased from {current_priority} to {new_priority}\n"
-                                                        resource_impact += f"- Resources can be reallocated to higher priority projects\n"
+                                                # Calculate simplified resource adjustment
+                                                priority_increase = ['Highest', 'High', 'Medium', 'Low', 'Lowest'].index(current_priority) > ['Highest', 'High', 'Medium', 'Low', 'Lowest'].index(new_priority)
                                                 
-                                                # Add critical tasks for high priority projects
-                                                if new_priority in ['Highest', 'High']:
-                                                    high_pri_tasks = project_tasks[(project_tasks['Status'] != 'Done') & (project_tasks['Priority'].isin(['Highest', 'High']))].head(3)
+                                                if priority_increase:
+                                                    resource_impact += f"- **Increased Resource Need**: {project} priority increased from {current_priority} to {new_priority}\n"
+                                                    resource_impact += f"- Recommended additional allocation: +20% for the {task_count} affected tasks\n"
+                                                else:
+                                                    resource_impact += f"- **Decreased Resource Need**: {project} priority decreased from {current_priority} to {new_priority}\n"
+                                                    resource_impact += f"- Resources can be reallocated to higher priority projects\n"
+                                            
+                                            # Add critical tasks for high priority projects
+                                            if new_priority in ['Highest', 'High']:
+                                                high_pri_tasks = project_tasks[(project_tasks['Status'] != 'Done') & (project_tasks['Priority'].isin(['Highest', 'High']))].head(3)
+                                                
+                                                if not high_pri_tasks.empty:
+                                                    critical_tasks += f"\n### Critical Tasks for {project}\n\n"
+                                                    critical_tasks += "| Task ID | Summary | Due Date | Assignee |\n| --- | --- | --- | --- |\n"
                                                     
-                                                    if not high_pri_tasks.empty:
-                                                        critical_tasks += f"\n### Critical Tasks for {project}\n\n"
-                                                        critical_tasks += "| Task ID | Summary | Due Date | Assignee |\n| --- | --- | --- | --- |\n"
+                                                    for _, task in high_pri_tasks.iterrows():
+                                                        task_id = task['Issue Key'] if 'Issue Key' in task else "Unknown"
+                                                        summary = task['Summary'] if 'Summary' in task else "Unknown"
+                                                        due_date = task['Due Date'].strftime('%Y-%m-%d') if 'Due Date' in task and pd.notna(task['Due Date']) else "Not set"
+                                                        assignee = task['Assignee'] if 'Assignee' in task and pd.notna(task['Assignee']) else "Unassigned"
                                                         
-                                                        for _, task in high_pri_tasks.iterrows():
-                                                            task_id = task['Issue Key'] if 'Issue Key' in task else "Unknown"
-                                                            summary = task['Summary'] if 'Summary' in task else "Unknown"
-                                                            due_date = task['Due Date'].strftime('%Y-%m-%d') if 'Due Date' in task and pd.notna(task['Due Date']) else "Not set"
-                                                            assignee = task['Assignee'] if 'Assignee' in task and pd.notna(task['Assignee']) else "Unassigned"
-                                                            
-                                                            critical_tasks += f"| {task_id} | {summary} | {due_date} | {assignee} |\n"
+                                                        critical_tasks += f"| {task_id} | {summary} | {due_date} | {assignee} |\n"
                                 
                                 # Timeline visualization
                                 timeline_viz = ""
@@ -2843,20 +2924,31 @@ def ai_pm_buddy_assistant():
                                     timeline_viz = "\n### Timeline Visualization\n\n```\n"
                                     
                                     for project in selected_projects:
-                                        project_change = next((p for p in priority_changes if p['Project'] == project), None)
-                                        if project_change:
-                                            current_priority = project_change['Current']
-                                            new_priority = project_change['New']
+                                        # Look for any issues in this project with priority changes
+                                        project_tasks = issues_df[issues_df['Project'] == project] if issues_df is not None and 'Project' in issues_df.columns else pd.DataFrame()
+                                        if not project_tasks.empty:
+                                            issue_keys_in_project = project_tasks['Issue Key'].tolist() if 'Issue Key' in project_tasks.columns else []
+                                            project_changes = [p for p in priority_changes if p.get('Issue Key') in issue_keys_in_project]
                                             
-                                            # Simple visual representation of timeline impact
-                                            priority_increase = ['Highest', 'High', 'Medium', 'Low', 'Lowest'].index(current_priority) > ['Highest', 'High', 'Medium', 'Low', 'Lowest'].index(new_priority)
-                                            
-                                            if priority_increase:
-                                                timeline_viz += f"{project} ({current_priority} → {new_priority}): |-------(Current)-------|\n"
-                                                timeline_viz += f"                          |-----(New)-----|  Timeline reduced by ~20%\n\n"
-                                            else:
-                                                timeline_viz += f"{project} ({current_priority} → {new_priority}): |-------(Current)-------|\n"
-                                                timeline_viz += f"                          |----------(New)----------| Timeline extended by ~15%\n\n"
+                                            if project_changes:
+                                                # Use the first change as representative
+                                                current_priority = project_changes[0].get('Current', 'Medium')
+                                                new_priority = project_changes[0].get('New', 'Medium')
+                                                
+                                                # Simple visual representation of timeline impact
+                                                try:
+                                                    priority_increase = ['Highest', 'High', 'Medium', 'Low', 'Lowest'].index(current_priority) > ['Highest', 'High', 'Medium', 'Low', 'Lowest'].index(new_priority)
+                                                    
+                                                    if priority_increase:
+                                                        timeline_viz += f"{project} ({current_priority} → {new_priority}): |-------(Current)-------|\n"
+                                                        timeline_viz += f"                          |-----(New)-----|  Timeline reduced by ~20%\n\n"
+                                                    else:
+                                                        timeline_viz += f"{project} ({current_priority} → {new_priority}): |-------(Current)-------|\n"
+                                                        timeline_viz += f"                          |----------(New)----------| Timeline extended by ~15%\n\n"
+                                                except ValueError:
+                                                    # Handle any unexpected priority values
+                                                    timeline_viz += f"{project} ({current_priority} → {new_priority}): |-------(Current)-------|\n"
+                                                    timeline_viz += f"                          |------(New)------| Timeline impact unknown\n\n"
                                     
                                     timeline_viz += "```\n"
                                 
@@ -3733,15 +3825,36 @@ elif nav_selection == "📆 Planning & Scheduling":
                     st.subheader("Historical Velocity Trends")
                     
                     # Plot the velocity data
-                    # Use our safe line chart method instead of px.line directly
-                    fig = safe_line_chart(
-                        velocity_history_df,
-                        x="Sprint",
-                        y="Velocity",
-                        color="Team",
-                        markers=True,
-                        title="Historical Velocity by Team"
-                    )
+                    # First check if the required columns exist
+                    if 'Sprint' in velocity_history_df.columns and 'Velocity' in velocity_history_df.columns:
+                        # Check if Team column exists
+                        if 'Team' in velocity_history_df.columns:
+                            # Use our safe line chart method instead of px.line directly
+                            fig = safe_line_chart(
+                                velocity_history_df,
+                                x="Sprint",
+                                y="Velocity",
+                                color="Team",
+                                markers=True,
+                                title="Historical Velocity by Team"
+                            )
+                        else:
+                            # If no Team column, create a simpler chart without color grouping
+                            fig = safe_line_chart(
+                                velocity_history_df,
+                                x="Sprint",
+                                y="Velocity",
+                                markers=True,
+                                title="Historical Velocity Trend"
+                            )
+                    else:
+                        # Create an empty figure with a message if data isn't in the expected format
+                        fig = go.Figure()
+                        fig.add_annotation(
+                            text="Velocity data is missing required columns",
+                            showarrow=False,
+                            font=dict(size=14)
+                        )
                     st.plotly_chart(fig, use_container_width=True, key="plotly_3d8acca1346e")
                     
                     # Team member efficiency

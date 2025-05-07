@@ -143,8 +143,18 @@ def team_capacity_planning(issues_df, skills_df, worklogs_df, leaves_df):
         
         # Subtract leave hours if any
         if leaves_during_sprint is not None and not leaves_during_sprint.empty:
+            # Check for different possible column names for the resource/user
+            resource_col = None
             if 'User' in leaves_during_sprint.columns:
-                member_leaves = leaves_during_sprint[leaves_during_sprint['User'] == member]
+                resource_col = 'User'
+            elif 'Resource' in leaves_during_sprint.columns:
+                resource_col = 'Resource'
+            elif 'Name' in leaves_during_sprint.columns:
+                resource_col = 'Name'
+            
+            if resource_col:
+                # Find leaves for this member (check for case-insensitive match)
+                member_leaves = leaves_during_sprint[leaves_during_sprint[resource_col].str.lower() == member.lower()]
                 
                 leave_hours = 0
                 for _, leave in member_leaves.iterrows():
@@ -153,7 +163,12 @@ def team_capacity_planning(issues_df, skills_df, worklogs_df, leaves_df):
                     overlap_days = (leave_end - leave_start).days + 1
                     leave_hours += overlap_days * hours_per_day
                 
+                # Ensure we don't subtract more hours than available
+                leave_hours = min(leave_hours, member_capacity)
                 member_capacity -= leave_hours
+                
+                # Debug information to help identify leave application issues
+                print(f"Member: {member}, Total capacity: {sprint_duration * hours_per_day}, Leave hours: {leave_hours}, Remaining: {member_capacity}")
         
         individual_capacity.append({
             'Team Member': member,
@@ -172,10 +187,27 @@ def team_capacity_planning(issues_df, skills_df, worklogs_df, leaves_df):
         color_continuous_scale='RdYlGn',  # Red to Yellow to Green
         range_color=[0, 100],
         title='Available Hours per Team Member',
-        text='Available Hours'
+        text=['Available: {} hrs ({}%)'.format(row['Available Hours'], int(row['Utilization %'])) for _, row in capacity_df.iterrows()]
     )
-    fig.update_layout(xaxis_title='Team Member', yaxis_title='Available Hours')
-    fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+    
+    # Add annotations for unavailable hours
+    for i, row in capacity_df.iterrows():
+        unavailable_hours = sprint_duration * hours_per_day - row['Available Hours']
+        if unavailable_hours > 0:
+            fig.add_annotation(
+                x=row['Team Member'],
+                y=row['Available Hours'] + 5,  # Position slightly above the bar
+                text=f"Unavailable: {unavailable_hours:.1f} hrs",
+                showarrow=False,
+                font=dict(size=10, color="red")
+            )
+    
+    fig.update_layout(
+        xaxis_title='Team Member', 
+        yaxis_title='Available Hours',
+        yaxis=dict(range=[0, sprint_duration * hours_per_day * 1.2])  # Add space for annotations
+    )
+    fig.update_traces(texttemplate='%{text}', textposition='outside')
     st.plotly_chart(fig, use_container_width=True)
     
     # Calculate skill coverage during sprint
@@ -193,22 +225,43 @@ def team_capacity_planning(issues_df, skills_df, worklogs_df, leaves_df):
         
         # Calculate skill availability considering leaves
         skill_availability = {skill: 0 for skill in all_skills}
+        skill_max_contributors = {skill: 0 for skill in all_skills}
         
+        # First, count how many team members have each skill
+        for member, skills in skill_group.items():
+            for skill in skills:
+                if skill in skill_max_contributors:
+                    skill_max_contributors[skill] += 1
+        
+        # Then calculate actual availability based on leaves
         for member, skills in skill_group.items():
             # Get member's availability
             member_row = capacity_df[capacity_df['Team Member'] == member]
             if not member_row.empty:
                 availability_ratio = member_row.iloc[0]['Utilization %'] / 100
                 
-                # For each skill this member has, add their availability
+                # For each skill this member has, add their proportional availability
                 for skill in skills:
                     if skill in skill_availability:
-                        skill_availability[skill] += availability_ratio
+                        # Weight this member's contribution by how many people have this skill
+                        if skill_max_contributors[skill] > 0:
+                            # A person contributes at most 1/N of the total skill availability
+                            # where N is the number of people with that skill
+                            max_contribution = 1.0 / skill_max_contributors[skill]
+                            contribution = max_contribution * availability_ratio
+                            skill_availability[skill] += contribution
+        
+        # Debug information
+        print("\nSkill availability calculation:")
+        for skill in all_skills:
+            contributors = skill_max_contributors.get(skill, 0)
+            avail = skill_availability.get(skill, 0) * 100
+            print(f"Skill: {skill}, Maximum Contributors: {contributors}, Calculated Availability: {avail:.1f}%")
         
         # Convert to dataframe for visualization
         skill_avail_df = pd.DataFrame({
             'Skill': list(skill_availability.keys()),
-            'Availability': [min(av, 1.0) for av in skill_availability.values()],  # Cap at 1.0 (100%)
+            'Availability': [av for av in skill_availability.values()],  # Don't cap at 1.0
             'Coverage %': [min(av * 100, 100) for av in skill_availability.values()]  # Cap at 100%
         })
         
@@ -244,13 +297,15 @@ def sprint_composition_recommendations(issues_df, skills_df, worklogs_df, leaves
         project_filter = st.multiselect(
             "Filter by Project", 
             options=open_issues['Project'].unique().tolist() if 'Project' in open_issues.columns else [],
-            default=[]
+            default=[],
+            key="sprint_composition_project_filter"
         )
     with col2:
         priority_filter = st.multiselect(
             "Filter by Priority", 
             options=open_issues['Priority'].unique().tolist() if 'Priority' in open_issues.columns else [],
-            default=[]
+            default=[],
+            key="sprint_composition_priority_filter"
         )
     
     # Apply filters
@@ -268,24 +323,38 @@ def sprint_composition_recommendations(issues_df, skills_df, worklogs_df, leaves
         available_columns = [col for col in display_columns if col in filtered_issues.columns]
         display_df = filtered_issues[available_columns].copy()
         
-        # Make selection interface
-        selection = st.data_editor(
+        # Make selection interface with actual checkboxes
+        # First add a Selection column to the DataFrame if it doesn't exist
+        if 'Selected' not in display_df.columns:
+            display_df['Selected'] = False
+        
+        # Display the interactive data editor with checkboxes
+        edited_df = st.data_editor(
             display_df,
             column_config={
                 "Selected": st.column_config.CheckboxColumn("Include in Sprint", default=False)
             },
+            disabled=["Issue Key", "Summary", "Project", "Priority", "Story Points", "Assignee"],
             hide_index=True,
             use_container_width=True,
-            num_rows="fixed"
+            key=f"sprint_issues_editor_{hash(tuple(sorted(display_df['Issue Key'].tolist())))}"
         )
         
-        # Get selected issues
-        if hasattr(selection, 'get_selected_rows'):
-            selected_indices = selection.get_selected_rows()
-            selected_issues = filtered_issues.iloc[list(selected_indices)] if selected_indices else pd.DataFrame()
+        # Get selected issues based on checkbox selections
+        selected_rows = edited_df[edited_df['Selected'] == True]
+        
+        if not selected_rows.empty:
+            # Get the Issue Keys from selected rows
+            selected_issue_keys = selected_rows['Issue Key'].tolist()
+            
+            # Filter the original filtered_issues dataframe to get full issue data
+            selected_issues = filtered_issues[filtered_issues['Issue Key'].isin(selected_issue_keys)].copy()
+            
+            # Show how many issues were selected
+            st.success(f"Selected {len(selected_issue_keys)} issues for the sprint.")
         else:
             selected_issues = pd.DataFrame()
-            st.info("Please select issues to include in the sprint.")
+            st.info("Please select issues to include in the sprint by checking the boxes.")
     else:
         st.warning("No open issues match the filters. Try adjusting filter criteria.")
         selected_issues = pd.DataFrame()
@@ -342,7 +411,7 @@ def sprint_composition_recommendations(issues_df, skills_df, worklogs_df, leaves
         st.subheader("🤖 AI-Powered Recommendations")
         
         if client is not None:
-            if st.button("Generate Sprint Recommendations"):
+            if st.button("Generate Sprint Recommendations", key="generate_sprint_recommendations_button"):
                 with st.spinner("Analyzing sprint composition and generating recommendations..."):
                     try:
                         # Create structured data for the model
@@ -353,7 +422,19 @@ def sprint_composition_recommendations(issues_df, skills_df, worklogs_df, leaves
                         }
                         
                         # Create a sample of issues for context (limit to 10 for token efficiency)
-                        issue_sample = selected_issues.head(10).to_dict(orient='records')
+                        # Convert to dict and handle timestamp serialization
+                        sample_df = selected_issues.head(10).copy()
+                        
+                        # Convert any timestamp columns to strings to make them JSON serializable
+                        for col in sample_df.select_dtypes(include=['datetime64[ns]']).columns:
+                            sample_df[col] = sample_df[col].dt.strftime('%Y-%m-%d')
+                        
+                        # Convert any other potentially problematic data types
+                        for col in sample_df.columns:
+                            if sample_df[col].dtype == 'object':
+                                sample_df[col] = sample_df[col].astype(str)
+                        
+                        issue_sample = sample_df.to_dict(orient='records')
                         
                         # Build prompt
                         prompt = f"""
@@ -479,51 +560,99 @@ def sprint_simulation(issues_df, skills_df, worklogs_df, leaves_df):
            delta=f"{adjusted_velocity - past_velocity_input:.1f}",
            delta_color="normal" if adjusted_velocity >= past_velocity_input else "inverse")
     
-    # Allow users to select high-priority tasks
-    st.subheader("High-Priority Tasks")
-    st.markdown("Select tasks that must be included in the sprint:")
+    # Allow users to select tasks for the sprint
+    st.subheader("Select Tasks for Sprint")
+    st.markdown("Select tasks to include in your sprint:")
     
-    # Use priority to filter likely candidates
-    high_priority_candidates = open_issues
-    if 'Priority' in open_issues.columns:
-        priority_order = {'Highest': 0, 'High': 1, 'Medium': 2, 'Low': 3, 'Lowest': 4}
-        high_priority_candidates = open_issues[open_issues['Priority'].isin(['Highest', 'High'])]
+    # Task filtering options
+    col1, col2 = st.columns(2)
+    with col1:
+        priority_filter = st.multiselect(
+            "Filter by Priority", 
+            options=open_issues['Priority'].unique().tolist() if 'Priority' in open_issues.columns else [],
+            default=[],
+            key="sprint_simulation_priority_filter"
+        )
+    with col2:
+        project_filter = st.multiselect(
+            "Filter by Project", 
+            options=open_issues['Project'].unique().tolist() if 'Project' in open_issues.columns else [],
+            default=[],
+            key="sprint_simulation_project_filter"
+        )
     
-    if high_priority_candidates.empty:
-        high_priority_candidates = open_issues
+    # Apply filters
+    filtered_issues = open_issues.copy()
+    if priority_filter and 'Priority' in filtered_issues.columns:
+        filtered_issues = filtered_issues[filtered_issues['Priority'].isin(priority_filter)]
+    if project_filter and 'Project' in filtered_issues.columns:
+        filtered_issues = filtered_issues[filtered_issues['Project'].isin(project_filter)]
     
-    # Display high priority tasks for selection
+    # Display all tasks with checkboxes for selection
     display_columns = ['Issue Key', 'Summary', 'Project', 'Priority', 'Story Points', 'Assignee']
-    available_columns = [col for col in display_columns if col in high_priority_candidates.columns]
+    available_columns = [col for col in display_columns if col in filtered_issues.columns]
     
-    high_priority_selection = st.data_editor(
-        high_priority_candidates[available_columns],
+    # Add a Selected column if it doesn't exist
+    display_df = filtered_issues[available_columns].copy()
+    if 'Selected' not in display_df.columns:
+        display_df['Selected'] = False
+    
+    # Display as an editable table with checkboxes
+    edited_df = st.data_editor(
+        display_df,
         column_config={
-            "Selected": st.column_config.CheckboxColumn("Must Include", default=False)
+            "Selected": st.column_config.CheckboxColumn("Include in Sprint", default=False)
         },
+        disabled=["Issue Key", "Summary", "Project", "Priority", "Story Points", "Assignee"],
         hide_index=True,
         use_container_width=True,
-        num_rows="fixed"
+        key=f"sprint_selection_{hash(tuple(sorted(display_df['Issue Key'].tolist())))}"
     )
     
-    # Get selected high priority issues
-    if hasattr(high_priority_selection, 'get_selected_rows'):
-        high_priority_indices = high_priority_selection.get_selected_rows()
-        must_include_issues = high_priority_candidates.iloc[list(high_priority_indices)] if high_priority_indices else pd.DataFrame()
+    # Get selected issues based on checkbox selections
+    selected_rows = edited_df[edited_df['Selected'] == True]
+    
+    if not selected_rows.empty:
+        # Get the Issue Keys from selected rows
+        selected_issue_keys = selected_rows['Issue Key'].tolist()
+        
+        # Filter the original filtered_issues dataframe to get full issue data
+        must_include_issues = filtered_issues[filtered_issues['Issue Key'].isin(selected_issue_keys)].copy()
+        
+        # Show how many issues were selected
+        st.success(f"Selected {len(selected_issue_keys)} issues for the sprint.")
     else:
         must_include_issues = pd.DataFrame()
+        st.info("Please select issues to include in the sprint by checking the boxes.")
     
     # Calculate remaining capacity
     must_include_points = must_include_issues['Story Points'].sum() if not must_include_issues.empty else 0
     remaining_capacity = adjusted_velocity - must_include_points
     
     # Display remaining capacity
-    st.metric("Remaining Capacity", f"{remaining_capacity:.1f} points", 
-           delta=f"-{must_include_points:.1f}", 
-           delta_color="inverse" if must_include_points > 0 else "normal")
+    if must_include_points > 0:
+        st.metric(
+            "Remaining Capacity", 
+            f"{remaining_capacity:.1f} points", 
+            delta=f"-{must_include_points:.1f}", 
+            delta_color="inverse"
+        )
+        if must_include_issues.empty:
+            st.info("No tasks selected yet. Select tasks above to see how they affect your capacity.")
+        else:
+            selected_points_text = f"Selected tasks: {len(must_include_issues)} issues, {must_include_points:.1f} story points"
+            st.success(selected_points_text)
+    else:
+        st.metric(
+            "Remaining Capacity", 
+            f"{remaining_capacity:.1f} points", 
+            delta="0.0", 
+            delta_color="normal"
+        )
+        st.info("No tasks selected yet. Select tasks above to see how they affect your capacity.")
     
     # Run simulation to fill the sprint
-    if st.button("Run Sprint Simulation"):
+    if st.button("Run Sprint Simulation", key="run_sprint_simulation_button"):
         with st.spinner("Simulating optimal sprint composition..."):
             # Remove already selected issues from pool
             if not must_include_issues.empty:

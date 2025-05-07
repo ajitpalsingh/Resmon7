@@ -134,8 +134,11 @@ def extract_debt_information(issues_df):
 
 def extract_risk_information(issues_df):
     """Extract risk information from issues"""
-    # Create a risk dataframe from issues
-    # Look for risk-related fields or tags
+    # Create a list to store all risk data frames that will be combined at the end
+    all_risk_dfs = []
+    
+    # Extract JIRA issue-based risks using keyword matching
+    st.info("Extracting risks from JIRA issues...")
     
     risk_keywords = ['risk', 'issue', 'blocker', 'impediment', 'dependency', 'constraint']
     
@@ -150,59 +153,156 @@ def extract_risk_information(issues_df):
     
     risk_issues = issues_df[condition].copy()
     
-    # If no matches found, create a sample structure
-    if risk_issues.empty:
-        # Create an empty dataframe with the necessary structure
+    if not risk_issues.empty:
+        # Process JIRA issue-based risks
+        jira_risk_df = risk_issues.rename(columns={
+            'Issue Key': 'Risk ID',
+            'Created': 'Identified Date'
+        })
+        
+        # Select relevant columns only
+        relevant_columns = [
+            'Risk ID', 'Summary', 'Description', 'Project', 'Component', 
+            'Identified Date', 'Priority', 'Status', 'Assignee', 'Due Date'
+        ]
+        
+        # Map existing columns to relevant columns
+        available_columns = [col for col in relevant_columns if col in jira_risk_df.columns]
+        jira_risk_df = jira_risk_df[available_columns].copy()
+        
+        # Rename 'Assignee' to 'Owner' if it exists
+        if 'Assignee' in jira_risk_df.columns:
+            jira_risk_df = jira_risk_df.rename(columns={'Assignee': 'Owner'})
+        
+        # Add risk specific columns
+        jira_risk_df['Impact'] = jira_risk_df['Priority'].map({
+            'Highest': 'Critical',
+            'High': 'High',
+            'Medium': 'Medium',
+            'Low': 'Low',
+            'Lowest': 'Negligible'
+        }).fillna('Medium')
+        
+        jira_risk_df['Probability'] = 'Medium'  # Default probability
+        
+        # Add missing columns with default values
+        missing_columns = ['Impact', 'Probability']
+        for col in missing_columns:
+            if col not in jira_risk_df.columns:
+                jira_risk_df[col] = 'Medium'  # Default value
+        
+        # Ensure date columns are datetime
+        date_columns = ['Identified Date', 'Due Date']
+        for col in date_columns:
+            if col in jira_risk_df.columns:
+                jira_risk_df[col] = pd.to_datetime(jira_risk_df[col], errors='coerce')
+        
+        # Add to the list of risk dataframes
+        all_risk_dfs.append(jira_risk_df)
+    
+    # Check for user-defined risk fields
+    user_risk_fields = ['Risk Issue Key', 'Risk Level', 'Risk Description', 'Risk Owner']
+    has_user_defined_risks = all(field in issues_df.columns for field in user_risk_fields)
+    
+    if has_user_defined_risks:
+        st.info("Processing user-defined risk information from uploaded data...")
+        
+        # Filter for rows that have risk information
+        user_risk_issues = issues_df[issues_df['Risk Issue Key'].notna()].copy()
+        
+        if not user_risk_issues.empty:
+            # Create risk dataframe using user-defined fields
+            user_risk_df = pd.DataFrame()
+            
+            # Map risk fields to standardized columns with swapped fields as requested
+            user_risk_df['Risk ID'] = user_risk_issues['Risk Issue Key']  # This is already RID-xxxx format
+            user_risk_df['URisk ID'] = user_risk_issues['Issue Key']  # Relabeled column, holds PSSDP-xxxx values
+            user_risk_df['Summary'] = user_risk_issues['Summary'] if 'Summary' in user_risk_issues.columns else user_risk_issues['Risk Description']
+            user_risk_df['Description'] = user_risk_issues['Risk Description']
+            user_risk_df['Impact'] = user_risk_issues['Risk Level'].map({
+                'Critical': 'Critical',
+                'Highest': 'Critical',
+                'High': 'High',
+                'Medium': 'Medium',
+                'Low': 'Low',
+                'Lowest': 'Negligible'
+            }).fillna('Medium')
+            user_risk_df['Owner'] = user_risk_issues['Risk Owner']
+            
+            # Use issue's Priority as a priority column (for consistency with filtering)
+            if 'Priority' in user_risk_issues.columns:
+                user_risk_df['Priority'] = user_risk_issues['Priority']
+            else:
+                # Map back from Impact to Priority
+                impact_to_priority = {
+                    'Critical': 'Highest',
+                    'High': 'High',
+                    'Medium': 'Medium',
+                    'Low': 'Low',
+                    'Negligible': 'Lowest'
+                }
+                user_risk_df['Priority'] = user_risk_df['Impact'].map(impact_to_priority)
+            
+            # Add additional fields if available
+            if 'Project' in user_risk_issues.columns:
+                user_risk_df['Project'] = user_risk_issues['Project']
+            if 'Component' in user_risk_issues.columns:
+                user_risk_df['Component'] = user_risk_issues['Component']
+            if 'Status' in user_risk_issues.columns:
+                user_risk_df['Status'] = user_risk_issues['Status']
+            else:
+                user_risk_df['Status'] = 'Open'  # Default status
+            if 'Created' in user_risk_issues.columns:
+                user_risk_df['Identified Date'] = user_risk_issues['Created']
+            if 'Due Date' in user_risk_issues.columns:
+                user_risk_df['Due Date'] = user_risk_issues['Due Date']
+            elif 'Risk Due Date' in user_risk_issues.columns:
+                user_risk_df['Due Date'] = user_risk_issues['Risk Due Date']
+            
+            # Set default probability (not provided in user fields)
+            user_risk_df['Probability'] = 'Medium'
+            
+            # Ensure date columns are datetime
+            date_columns = ['Identified Date', 'Due Date']
+            for col in date_columns:
+                if col in user_risk_df.columns:
+                    user_risk_df[col] = pd.to_datetime(user_risk_df[col], errors='coerce')
+            
+            # Add to the list of risk dataframes
+            all_risk_dfs.append(user_risk_df)
+            
+            # Print debug information
+            st.success(f"Successfully processed {len(user_risk_df)} user-defined risks with RID prefixes")
+    
+    # Combine all risk dataframes
+    if all_risk_dfs:
+        # Find common columns across all dataframes
+        common_cols = set(all_risk_dfs[0].columns)
+        for df in all_risk_dfs[1:]:
+            common_cols &= set(df.columns)
+        
+        # Ensure all dataframes have the same columns for concatenation
+        for i, df in enumerate(all_risk_dfs):
+            missing_cols = common_cols - set(df.columns)
+            for col in missing_cols:
+                all_risk_dfs[i][col] = None
+        
+        # Combine all risk dataframes
+        combined_risk_df = pd.concat(all_risk_dfs, ignore_index=True)
+        
+        # Print debug information
+        st.info(f"Combined risk register contains {len(combined_risk_df)} total risks")
+        
+        # Return the combined risk dataframe
+        return combined_risk_df
+    else:
+        # If no risks found, create an empty dataframe with the necessary structure
         risk_df = pd.DataFrame(columns=[
             'Risk ID', 'Summary', 'Description', 'Project', 'Component', 
-            'Identified Date', 'Impact', 'Probability', 'Status', 'Owner', 'Due Date'
+            'Identified Date', 'Impact', 'Probability', 'Status', 'Owner', 'Due Date',
+            'URisk ID', 'Priority'  # Added additional columns
         ])
         return risk_df
-    
-    # Rename and select relevant columns
-    risk_df = risk_issues.rename(columns={
-        'Issue Key': 'Risk ID',
-        'Created': 'Identified Date'
-    })
-    
-    # Select relevant columns only
-    relevant_columns = [
-        'Risk ID', 'Summary', 'Description', 'Project', 'Component', 
-        'Identified Date', 'Priority', 'Status', 'Assignee', 'Due Date'
-    ]
-    
-    # Map existing columns to relevant columns
-    available_columns = [col for col in relevant_columns if col in risk_df.columns]
-    risk_df = risk_df[available_columns].copy()
-    
-    # Rename 'Assignee' to 'Owner' if it exists
-    if 'Assignee' in risk_df.columns:
-        risk_df = risk_df.rename(columns={'Assignee': 'Owner'})
-    
-    # Add risk specific columns
-    risk_df['Impact'] = risk_df['Priority'].map({
-        'Highest': 'Critical',
-        'High': 'High',
-        'Medium': 'Medium',
-        'Low': 'Low',
-        'Lowest': 'Negligible'
-    }).fillna('Medium')
-    
-    risk_df['Probability'] = 'Medium'  # Default probability
-    
-    # Add missing columns with default values
-    missing_columns = ['Impact', 'Probability']
-    for col in missing_columns:
-        if col not in risk_df.columns:
-            risk_df[col] = 'Medium'  # Default value
-    
-    # Ensure date columns are datetime
-    date_columns = ['Identified Date', 'Due Date']
-    for col in date_columns:
-        if col in risk_df.columns:
-            risk_df[col] = pd.to_datetime(risk_df[col], errors='coerce')
-    
-    return risk_df
 
 
 def manage_technical_debt(debt_df, issues_df, worklogs_df):
@@ -533,6 +633,14 @@ def manage_risks(risk_df, issues_df, worklogs_df):
     """Manage project risks"""
     st.subheader("⚠️ Risk Management")
     
+    # Print debug message to show risk dataframe structure
+    st.info(f"Processing risk register with {len(risk_df)} items")
+    
+    # Count user-defined risks (with RID prefix) and standard risks
+    user_defined_risks = 0
+    if 'Risk ID' in risk_df.columns:
+        user_defined_risks = len(risk_df[risk_df['Risk ID'].str.startswith('RID-', na=False)])
+    
     # Display summary metrics
     col1, col2, col3, col4 = st.columns(4)
     
@@ -551,6 +659,9 @@ def manage_risks(risk_df, issues_df, worklogs_df):
     with col4:
         st.metric("Critical", critical_risks)
     
+    # Show metrics for user-defined vs standard risks
+    st.info(f"Risk Register contains {user_defined_risks} user-defined risks (RID prefix) and {total_risks - user_defined_risks} standard risks")
+    
     # Display risk items
     st.subheader("📝 Risk Register")
     
@@ -560,19 +671,22 @@ def manage_risks(risk_df, issues_df, worklogs_df):
         status_filter = st.multiselect(
             "Filter by Status", 
             options=risk_df['Status'].unique().tolist() if 'Status' in risk_df.columns else [],
-            default=[]
+            default=[],
+            key="risk_status_filter"
         )
     with col2:
         impact_filter = st.multiselect(
             "Filter by Impact", 
             options=risk_df['Impact'].unique().tolist() if 'Impact' in risk_df.columns else [],
-            default=[]
+            default=[],
+            key="risk_impact_filter"
         )
     with col3:
-        project_filter = st.multiselect(
-            "Filter by Project", 
-            options=risk_df['Project'].unique().tolist() if 'Project' in risk_df.columns else [],
-            default=[]
+        owner_filter = st.multiselect(
+            "Filter by Owner", 
+            options=risk_df['Owner'].unique().tolist() if 'Owner' in risk_df.columns else [],
+            default=[],
+            key="risk_owner_filter"
         )
     
     # Apply filters
@@ -581,12 +695,49 @@ def manage_risks(risk_df, issues_df, worklogs_df):
         filtered_risks = filtered_risks[filtered_risks['Status'].isin(status_filter)]
     if impact_filter and 'Impact' in filtered_risks.columns:
         filtered_risks = filtered_risks[filtered_risks['Impact'].isin(impact_filter)]
-    if project_filter and 'Project' in filtered_risks.columns:
-        filtered_risks = filtered_risks[filtered_risks['Project'].isin(project_filter)]
+    if owner_filter and 'Owner' in filtered_risks.columns:
+        filtered_risks = filtered_risks[filtered_risks['Owner'].isin(owner_filter)]
+    
+    # Rename 'Related Issue' to 'URisk ID' if it exists but 'URisk ID' doesn't
+    if 'Related Issue' in filtered_risks.columns and 'URisk ID' not in filtered_risks.columns:
+        filtered_risks = filtered_risks.rename(columns={'Related Issue': 'URisk ID'})
+    
+    # Ensure important fields are displayed prominently
+    display_columns = [
+        'Risk ID',  # User-defined Risk Issue Key
+        'URisk ID',  # Related JIRA issue (renamed from 'Related Issue')
+        'Summary',  # From Summary or Risk Description
+        'Description',  # From Risk Description
+        'Impact',  # From Risk Level
+        'Owner',  # From Risk Owner
+        'Status',
+        'Probability'
+    ]
+    
+    # Add any other available columns
+    other_columns = [col for col in filtered_risks.columns if col not in display_columns]
+    display_columns.extend(other_columns)
+    
+    # Filter to only include columns that exist in the dataframe
+    display_columns = [col for col in display_columns if col in filtered_risks.columns]
     
     # Display filtered risks
     if not filtered_risks.empty:
-        st.dataframe(filtered_risks, use_container_width=True)
+        # Reorder columns to ensure important fields are shown first
+        display_df = filtered_risks[display_columns].copy() if display_columns else filtered_risks
+        
+        # Use a formatting function to highlight high-impact risks
+        def highlight_high_impact(val):
+            if val in ['Critical', 'High']:
+                return 'background-color: #ffcccc'
+            return ''
+        
+        # Apply the style if the Impact column exists
+        if 'Impact' in display_df.columns:
+            styled_df = display_df.style.applymap(highlight_high_impact, subset=['Impact'])
+            st.dataframe(styled_df, use_container_width=True)
+        else:
+            st.dataframe(display_df, use_container_width=True)
     else:
         st.info("No risks match the current filters.")
     
@@ -688,10 +839,53 @@ def manage_risks(risk_df, issues_df, worklogs_df):
         
         selected_risk = risk_df[risk_df['Risk ID'] == selected_risk_id].iloc[0]
         
-        st.markdown(f"**Risk ID:** {selected_risk['Risk ID']}")
-        st.markdown(f"**Summary:** {selected_risk.get('Summary', 'N/A')}")
-        st.markdown(f"**Impact:** {selected_risk.get('Impact', 'N/A')}")
-        st.markdown(f"**Probability:** {selected_risk.get('Probability', 'N/A')}")
+        # Display comprehensive risk information
+        st.markdown("### Risk Details")
+        
+        # Determine if this is a user-defined risk (with RID prefix)
+        is_user_defined = 'Risk ID' in selected_risk and str(selected_risk['Risk ID']).startswith('RID-')
+        if is_user_defined:
+            st.success("User-defined risk with RID prefix")
+        
+        # Create two columns for better organization
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"**Risk ID:** {selected_risk['Risk ID']}")
+            # Handle both related JIRA issues and mapping for user-defined risks
+            if 'URisk ID' in selected_risk and pd.notna(selected_risk['URisk ID']):
+                st.markdown(f"**Related Issue:** {selected_risk['URisk ID']}")
+            elif 'Related Issue' in selected_risk and pd.notna(selected_risk['Related Issue']):
+                st.markdown(f"**Related Issue:** {selected_risk['Related Issue']}")
+            
+            st.markdown(f"**Summary:** {selected_risk.get('Summary', 'N/A')}")
+            st.markdown(f"**Description:** {selected_risk.get('Description', 'N/A')}")
+        
+        with col2:
+            # For user-defined risks, specially format the Impact Level
+            if is_user_defined:
+                impact = selected_risk.get('Impact', 'N/A')
+                impact_color = {
+                    'Critical': 'red',
+                    'High': 'orange',
+                    'Medium': 'blue',
+                    'Low': 'green',
+                    'Negligible': 'gray'
+                }.get(impact, 'black')
+                
+                st.markdown(f"**Impact Level:** <span style='color:{impact_color};font-weight:bold'>{impact}</span>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"**Impact Level:** {selected_risk.get('Impact', 'N/A')}")
+                
+            st.markdown(f"**Probability:** {selected_risk.get('Probability', 'N/A')}")
+            st.markdown(f"**Owner:** {selected_risk.get('Owner', 'N/A')}")
+            st.markdown(f"**Status:** {selected_risk.get('Status', 'N/A')}")
+            
+        # Add any project or component info if available
+        if 'Project' in selected_risk:
+            st.markdown(f"**Project:** {selected_risk['Project']}")
+        if 'Component' in selected_risk:
+            st.markdown(f"**Component:** {selected_risk['Component']}")
         
         # Mitigation strategy planning
         st.markdown("### Mitigation Strategy")

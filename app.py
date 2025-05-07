@@ -69,6 +69,20 @@ else:
     
 if 'chat_session' not in st.session_state:
     st.session_state['chat_session'] = []
+    
+# Session state for Daily Brief action buttons
+if 'show_overdue' not in st.session_state:
+    st.session_state['show_overdue'] = False
+    
+if 'show_due_soon' not in st.session_state:
+    st.session_state['show_due_soon'] = False
+    
+# Navigation session state variables
+if 'sidebar_selection' not in st.session_state:
+    st.session_state['sidebar_selection'] = None
+    
+if 'resource_tab' not in st.session_state:
+    st.session_state['resource_tab'] = None
 
 # Function to append to feedback history
 def append_to_feedback_history(entry):
@@ -169,10 +183,27 @@ font = "sans serif"
     
     # If no file is uploaded, use the default file
     if uploaded_file is None:
-        fallback_file = "enriched_jira_data_with_simulated.xlsx"
-        if os.path.exists(fallback_file):
+        # Try to use the file with user-defined risk fields first (check both paths)
+        fallback_paths = [
+            "attached_assets/enriched_jira_data_furthercorrected1.xlsx",  # Original path
+            "enriched_jira_data_furthercorrected1.xlsx"  # Deployment path
+        ]
+        
+        fallback_file = None
+        for path in fallback_paths:
+            if os.path.exists(path):
+                fallback_file = path
+                break
+                
+        if fallback_file:
             uploaded_file = open(fallback_file, "rb")
-            st.sidebar.success("Loaded default file: enriched_jira_data_with_simulated.xlsx")
+            st.sidebar.success(f"Loaded default file: {os.path.basename(fallback_file)}")
+        else:
+            # Fall back to the simulated data if the corrected file is not available
+            fallback_file = "enriched_jira_data_with_simulated.xlsx"
+            if os.path.exists(fallback_file):
+                uploaded_file = open(fallback_file, "rb")
+                st.sidebar.success("Loaded default file: enriched_jira_data_with_simulated.xlsx")
 
     # Deployment package download options - at the bottom of the sidebar
     st.sidebar.markdown("---")
@@ -473,6 +504,12 @@ with st.sidebar:
     
     nav_selection = st.radio("Navigation", nav_options)
     
+    # Check if navigation is set via recommendation links
+    if st.session_state.get('sidebar_selection') is not None:
+        nav_selection = st.session_state['sidebar_selection']
+        # Reset after use
+        st.session_state['sidebar_selection'] = None
+        
     # Sub-navigation options based on main selection
     if nav_selection == "📊 Dashboard":
         st.markdown("### Dashboard Views")
@@ -484,9 +521,23 @@ with st.sidebar:
     
     elif nav_selection == "🎯 Resource Management":
         st.markdown("### Resource Options")
+        
+        # Check if a specific resource tab was requested
+        if st.session_state.get('resource_tab') is not None:
+            if st.session_state['resource_tab'] == "AI Task Redistribution":
+                # Map user-friendly name to radio button option
+                default_index = 2  # "Task Redistribution (AI)" is at index 2
+            else:
+                default_index = 0
+            # Reset after use
+            st.session_state['resource_tab'] = None
+        else:
+            default_index = 0
+            
         resource_view = st.radio(
             "",
             ["Team Workload", "Skill Distribution", "Task Redistribution (AI)"],
+            index=default_index,
             label_visibility="collapsed"
         )
     
@@ -500,9 +551,26 @@ with st.sidebar:
     
     elif nav_selection == "🚨 Risk Management":
         st.markdown("### Risk Options")
+        
+        # Check for navigation to Daily Brief from recommendation links
+        if st.session_state.get('risk_view') is not None:
+            if st.session_state['risk_view'] == "Daily Brief":
+                default_index = 0  # "Daily Brief" is at index 0
+            elif st.session_state['risk_view'] == "Technical Debt":
+                default_index = 1
+            elif st.session_state['risk_view'] == "Risk Assessment":
+                default_index = 2
+            else:
+                default_index = 0
+            # Reset after use
+            st.session_state['risk_view'] = None
+        else:
+            default_index = 0
+            
         risk_view = st.radio(
             "",
             ["Daily Brief", "Technical Debt", "Risk Assessment"],
+            index=default_index,
             label_visibility="collapsed"
         )
     
@@ -519,11 +587,13 @@ with st.sidebar:
 
 # ---------- Reusable Standard Filter Component ----------
 def standard_filter_section(expanded=True, section_id="default"):
-    # Use a randomly generated component ID to ensure uniqueness
-    import random
-    import string
-    # Generate a random 6-character string to ensure uniqueness
-    random_id = ''.join(random.choices(string.ascii_lowercase, k=6))
+    # Initialize filter state variables if not present
+    if f"filter_project_{section_id}" not in st.session_state:
+        st.session_state[f"filter_project_{section_id}"] = "All Projects"
+    if f"filter_sprint_{section_id}" not in st.session_state:
+        st.session_state[f"filter_sprint_{section_id}"] = "All Sprints"
+    if f"filter_resource_{section_id}" not in st.session_state:
+        st.session_state[f"filter_resource_{section_id}"] = "All Resources"
     
     with st.expander("Filters", expanded=expanded):
         filter_col1, filter_col2, filter_col3 = st.columns(3)
@@ -532,19 +602,27 @@ def standard_filter_section(expanded=True, section_id="default"):
             # Project/POD filter
             if issues_df is not None and 'Project' in issues_df.columns:
                 projects = ["All Projects"] + sorted(issues_df['Project'].unique().tolist())
-                selected_project = st.selectbox("Project/POD", projects, key=f"project_filter_{section_id}_{random_id}")
+                selected_project = st.selectbox(
+                    "Project/POD", 
+                    projects, 
+                    key=f"filter_project_{section_id}"
+                )
             else:
                 selected_project = "All Projects"
-                st.selectbox("Project/POD", ["All Projects"], key=f"project_filter_empty_{section_id}_{random_id}")
+                st.selectbox("Project/POD", ["All Projects"], key=f"filter_project_empty_{section_id}")
         
         with filter_col2:
             # Sprint filter
             if issues_df is not None and 'Sprint' in issues_df.columns:
                 sprints = ["All Sprints"] + sorted(issues_df['Sprint'].dropna().unique().tolist())
-                selected_sprint = st.selectbox("Sprint", sprints, key=f"sprint_filter_{section_id}_{random_id}")
+                selected_sprint = st.selectbox(
+                    "Sprint", 
+                    sprints, 
+                    key=f"filter_sprint_{section_id}"
+                )
             else:
                 selected_sprint = "All Sprints"
-                st.selectbox("Sprint", ["All Sprints"], key=f"sprint_filter_empty_{section_id}_{random_id}")
+                st.selectbox("Sprint", ["All Sprints"], key=f"filter_sprint_empty_{section_id}")
         
         with filter_col3:
             # Resource filter
@@ -553,7 +631,17 @@ def standard_filter_section(expanded=True, section_id="default"):
                 resources += sorted(worklogs_df['Resource'].unique().tolist())
             elif skills_df is not None and 'Resource' in skills_df.columns:
                 resources += sorted(skills_df['Resource'].unique().tolist())
-            selected_resource = st.selectbox("Resource", resources, key=f"resource_filter_{section_id}_{random_id}")
+            selected_resource = st.selectbox(
+                "Resource", 
+                resources, 
+                key=f"filter_resource_{section_id}"
+            )
+        
+        # Print debug info about selections
+        print(f"Current filter selections for {section_id}:")
+        print(f"  Project: {selected_project}")
+        print(f"  Sprint: {selected_sprint}")
+        print(f"  Resource: {selected_resource}")
         
         # Return selected filters
         return {
@@ -570,37 +658,125 @@ def apply_filters(filters):
     filtered_skills_df = skills_df.copy() if skills_df is not None else None
     filtered_leaves_df = leaves_df.copy() if leaves_df is not None else None
     
+    # Debug information about filters and dataframes
+    print(f"Applying filters: {filters}")
+    print(f"Original issues_df shape: {filtered_issues_df.shape if filtered_issues_df is not None else None}")
+    
     # Apply Project filter
     if filtered_issues_df is not None and filters["project"] != "All Projects":
-        filtered_issues_df = filtered_issues_df[filtered_issues_df['Project'] == filters["project"]]
+        print(f"Filtering by project: {filters['project']}")
+        print(f"Project values in dataframe: {filtered_issues_df['Project'].unique()}")
         
-        # Filter related worklogs
-        if filtered_worklogs_df is not None and 'Issue Key' in filtered_worklogs_df.columns:
-            filtered_issue_keys = filtered_issues_df['Issue Key'].unique()
-            filtered_worklogs_df = filtered_worklogs_df[filtered_worklogs_df['Issue Key'].isin(filtered_issue_keys)]
+        # Check column names for debugging
+        print(f"Columns in issues_df: {filtered_issues_df.columns.tolist()}")
+        print(f"Columns in worklogs_df: {filtered_worklogs_df.columns.tolist() if filtered_worklogs_df is not None else 'None'}")
+        
+        filtered_issues_df = filtered_issues_df[filtered_issues_df['Project'] == filters["project"]]
+        print(f"After project filter - issues_df shape: {filtered_issues_df.shape}")
+        
+        # Filter related worklogs - check whether to use 'Issue Key' or 'Issue key'
+        if filtered_worklogs_df is not None:
+            # Determine the correct column name
+            issue_key_col = None
+            if 'Issue Key' in filtered_worklogs_df.columns:
+                issue_key_col = 'Issue Key'
+            elif 'Issue key' in filtered_worklogs_df.columns:
+                issue_key_col = 'Issue key'
+                
+            if issue_key_col:
+                # Determine the correct column name in issues_df
+                issues_key_col = None
+                if 'Issue Key' in filtered_issues_df.columns:
+                    issues_key_col = 'Issue Key'
+                elif 'Issue key' in filtered_issues_df.columns:
+                    issues_key_col = 'Issue key'
+                
+                if issues_key_col:
+                    filtered_issue_keys = filtered_issues_df[issues_key_col].unique()
+                    filtered_worklogs_df = filtered_worklogs_df[filtered_worklogs_df[issue_key_col].isin(filtered_issue_keys)]
+                    print(f"After filtering worklogs by {issues_key_col} - worklogs_df shape: {filtered_worklogs_df.shape}")
+                else:
+                    print("Could not find Issue Key column in issues_df")
     
     # Apply Sprint filter
     if filtered_issues_df is not None and 'Sprint' in filtered_issues_df.columns and filters["sprint"] != "All Sprints":
+        print(f"Filtering by sprint: {filters['sprint']}")
+        print(f"Sprint values in dataframe: {filtered_issues_df['Sprint'].unique()}")
         filtered_issues_df = filtered_issues_df[filtered_issues_df['Sprint'] == filters["sprint"]]
+        print(f"After sprint filter - issues_df shape: {filtered_issues_df.shape}")
         
-        # Filter related worklogs
-        if filtered_worklogs_df is not None and 'Issue Key' in filtered_worklogs_df.columns:
-            filtered_issue_keys = filtered_issues_df['Issue Key'].unique()
-            filtered_worklogs_df = filtered_worklogs_df[filtered_worklogs_df['Issue Key'].isin(filtered_issue_keys)]
+        # Filter related worklogs - check whether to use 'Issue Key' or 'Issue key'
+        if filtered_worklogs_df is not None:
+            # Determine the correct column name
+            issue_key_col = None
+            if 'Issue Key' in filtered_worklogs_df.columns:
+                issue_key_col = 'Issue Key'
+            elif 'Issue key' in filtered_worklogs_df.columns:
+                issue_key_col = 'Issue key'
+                
+            if issue_key_col:
+                # Determine the correct column name in issues_df
+                issues_key_col = None
+                if 'Issue Key' in filtered_issues_df.columns:
+                    issues_key_col = 'Issue Key'
+                elif 'Issue key' in filtered_issues_df.columns:
+                    issues_key_col = 'Issue key'
+                
+                if issues_key_col:
+                    filtered_issue_keys = filtered_issues_df[issues_key_col].unique()
+                    filtered_worklogs_df = filtered_worklogs_df[filtered_worklogs_df[issue_key_col].isin(filtered_issue_keys)]
+                    print(f"After filtering worklogs by sprint - worklogs_df shape: {filtered_worklogs_df.shape}")
+                else:
+                    print("Could not find Issue Key column in issues_df")
     
     # Apply Resource filter
     if filters["resource"] != "All Resources":
+        print(f"Filtering by resource: {filters['resource']}")
+        
+        # Resources might be called "Assignee" in the issues dataframe
         if filtered_issues_df is not None and 'Assignee' in filtered_issues_df.columns:
+            print(f"Assignee values in dataframe: {filtered_issues_df['Assignee'].unique()}")
             filtered_issues_df = filtered_issues_df[filtered_issues_df['Assignee'] == filters["resource"]]
+            print(f"After resource filter (assignee) - issues_df shape: {filtered_issues_df.shape}")
         
-        if filtered_worklogs_df is not None and 'Resource' in filtered_worklogs_df.columns:
-            filtered_worklogs_df = filtered_worklogs_df[filtered_worklogs_df['Resource'] == filters["resource"]]
+        # Filter worklogs by resource
+        if filtered_worklogs_df is not None:
+            resource_col = None
+            if 'Resource' in filtered_worklogs_df.columns:
+                resource_col = 'Resource'
+            elif 'User' in filtered_worklogs_df.columns:  # Alternative column name
+                resource_col = 'User'
+                
+            if resource_col:
+                filtered_worklogs_df = filtered_worklogs_df[filtered_worklogs_df[resource_col] == filters["resource"]]
+                print(f"After filtering worklogs by resource - worklogs_df shape: {filtered_worklogs_df.shape}")
         
-        if filtered_skills_df is not None and 'Resource' in filtered_skills_df.columns:
-            filtered_skills_df = filtered_skills_df[filtered_skills_df['Resource'] == filters["resource"]]
+        # Filter skills by resource
+        if filtered_skills_df is not None:
+            resource_col = None
+            if 'Resource' in filtered_skills_df.columns:
+                resource_col = 'Resource'
+            elif 'Name' in filtered_skills_df.columns:  # Alternative column name
+                resource_col = 'Name'
+                
+            if resource_col:
+                filtered_skills_df = filtered_skills_df[filtered_skills_df[resource_col] == filters["resource"]]
+                print(f"After filtering skills by resource - skills_df shape: {filtered_skills_df.shape}")
         
-        if filtered_leaves_df is not None and 'Resource' in filtered_leaves_df.columns:
-            filtered_leaves_df = filtered_leaves_df[filtered_leaves_df['Resource'] == filters["resource"]]
+        # Filter leaves by resource
+        if filtered_leaves_df is not None:
+            resource_col = None
+            if 'Resource' in filtered_leaves_df.columns:
+                resource_col = 'Resource'
+            elif 'User' in filtered_leaves_df.columns:  # Alternative column name
+                resource_col = 'User'
+                
+            if resource_col:
+                filtered_leaves_df = filtered_leaves_df[filtered_leaves_df[resource_col] == filters["resource"]]
+                print(f"After filtering leaves by resource - leaves_df shape: {filtered_leaves_df.shape}")
+    
+    # Final debug information
+    print(f"Final filtered issues_df shape: {filtered_issues_df.shape if filtered_issues_df is not None else None}")
     
     return filtered_issues_df, filtered_worklogs_df, filtered_skills_df, filtered_leaves_df
 
@@ -711,7 +887,9 @@ if nav_selection == "📊 Dashboard":
                 fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor=colors['grid'])
                 fig.update_xaxes(showgrid=False)
                 
-                st.plotly_chart(fig, use_container_width=True, key="plotly_bd5ebd859556")
+                # Create a unique key based on the filter selections to prevent duplicate keys
+                chart_key = f"plotly_status_{filters['project']}_{filters['sprint']}_{filters['resource']}".replace(" ", "_")
+                st.plotly_chart(fig, use_container_width=True, key=chart_key)
                 
                 # Priority distribution
                 st.subheader("Task Priority Distribution")
@@ -1553,6 +1731,19 @@ def pm_daily_brief():
     if issues_df is None:
         st.warning("Please upload a valid JIRA Excel file.")
         return
+        
+    # Track whether we need to show highlighted sections
+    show_overdue = st.session_state.get('show_overdue', False)
+    show_due_soon = st.session_state.get('show_due_soon', False)
+    
+    # Reset flags after use
+    if show_overdue:
+        st.session_state['show_overdue'] = False
+        st.info("📌 Showing overdue tasks as requested")
+        
+    if show_due_soon:
+        st.session_state['show_due_soon'] = False
+        st.info("📌 Showing tasks due this week as requested")
 
     today = pd.to_datetime("today").normalize()
     issues_df['Start Date'] = pd.to_datetime(issues_df['Start Date'], errors='coerce')
@@ -1566,17 +1757,51 @@ def pm_daily_brief():
 
     st.subheader("🔧 Action Required")
     if not unassigned.empty: st.markdown("**🔲 Unassigned Tasks**"); st.dataframe(unassigned)
-    if not due_soon.empty: st.markdown("**🗓 Tasks Due This Week**"); st.dataframe(due_soon)
+    
+    # Add highlight box around due soon tasks if selected
+    if show_due_soon and not due_soon.empty:
+        with st.container():
+            st.markdown("---")
+            st.markdown("### 🔍 HIGHLIGHTED SECTION")
+            st.markdown("**🗓 Tasks Due This Week**")
+            st.dataframe(due_soon, use_container_width=True)
+            st.markdown("---")
+    elif not due_soon.empty:
+        st.markdown("**🗓 Tasks Due This Week**")
+        st.dataframe(due_soon)
+        
     if not stuck.empty: st.markdown("**🔄 Stuck Tasks (In Progress > 7 days)**"); st.dataframe(stuck)
 
     st.subheader("🚨 Alerts & Notifications")
     if not missing_est.empty: st.markdown("**⚠️ Missing Estimates**"); st.dataframe(missing_est)
-    if not overdue.empty: st.markdown("**⏰ Overdue Tasks**"); st.dataframe(overdue)
+    
+    # Add highlight box around overdue tasks if selected
+    if show_overdue and not overdue.empty:
+        with st.container():
+            st.markdown("---")
+            st.markdown("### 🔍 HIGHLIGHTED SECTION")
+            st.markdown("**⏰ Overdue Tasks**")
+            st.dataframe(overdue, use_container_width=True)
+            st.markdown("---")
+    elif not overdue.empty:
+        st.markdown("**⏰ Overdue Tasks**")
+        st.dataframe(overdue)
 
     st.subheader("🤖 Recommendations")
-    st.markdown("- Reassign unassigned or stuck tasks.")
-    st.markdown("- Alert assignees with overdue items.")
-    st.markdown("- Review items due this week.")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("Reassign unassigned tasks", key="btn_reassign"):
+            st.info("This feature would automatically redistribute unassigned tasks to team members based on workload and skills. Integration with JIRA API required for full implementation.")
+            
+    with col2:
+        if st.button("Alert overdue assignees", key="btn_alert"):
+            st.info("This feature would send MS Teams notifications to team members with overdue tasks. MS Teams integration required for full implementation.")
+            
+    with col3:
+        if st.button("Review due this week", key="btn_review"):
+            st.info("This feature would schedule an MS Outlook calendar event to review upcoming tasks. MS Outlook integration required for full implementation.")
 
     brief = f"""
     === PROJECT MANAGER DAILY BRIEF ===
@@ -4072,7 +4297,23 @@ elif nav_selection == "🚨 Risk Management":
                     
                     # Calculate metrics
                     total_issues = len(filtered_issues_df)
-                    high_risks = len(filtered_issues_df[filtered_issues_df[risk_column].isin(['High', 'Highest'])])
+                    
+                    # Count high risks from both regular Priority/Risk Level and user-defined risks
+                    std_high_risks = len(filtered_issues_df[filtered_issues_df[risk_column].isin(['High', 'Highest'])])
+                    
+                    # Add user-defined high risks if available
+                    user_high_risks = 0
+                    if 'Risk Issue Key' in filtered_issues_df.columns and 'Risk Level' in filtered_issues_df.columns:
+                        user_high_risks = len(filtered_issues_df[
+                            (filtered_issues_df['Risk Issue Key'].notna()) & 
+                            (filtered_issues_df['Risk Level'].isin(['High', 'Highest', 'Critical']))
+                        ])
+                        # Debug information
+                        st.sidebar.markdown(f"Found {user_high_risks} user-defined high/critical risks")
+                    
+                    # Combine both standard and user-defined high risks
+                    high_risks = std_high_risks + user_high_risks
+                    
                     overdue_issues = len(filtered_issues_df[
                         (filtered_issues_df['Due Date'] < current_date) & 
                         (filtered_issues_df['Status'] != 'Done')
@@ -4245,11 +4486,38 @@ elif nav_selection == "🚨 Risk Management":
                 # Risk detail table
                 st.subheader("High Risk Items")
                 if 'Priority' in filtered_issues_df.columns:
-                    high_risk_items = filtered_issues_df[filtered_issues_df['Priority'].isin(['Highest', 'High']) & 
+                    # Get standard high risk items
+                    std_high_risk_items = filtered_issues_df[filtered_issues_df['Priority'].isin(['Highest', 'High']) & 
                                                        (filtered_issues_df['Status'] != 'Done')]
                     
-                    if not high_risk_items.empty:
-                        st.dataframe(high_risk_items[['Issue Key', 'Summary', 'Assignee', 'Priority', 'Status', 'Due Date']], use_container_width=True)
+                    # Get user-defined high risk items if available
+                    user_high_risk_items = pd.DataFrame()
+                    if 'Risk Issue Key' in filtered_issues_df.columns and 'Risk Level' in filtered_issues_df.columns:
+                        user_high_risk_items = filtered_issues_df[
+                            (filtered_issues_df['Risk Issue Key'].notna()) & 
+                            (filtered_issues_df['Risk Level'].isin(['High', 'Highest', 'Critical'])) &
+                            (filtered_issues_df['Status'] != 'Done')
+                        ]
+                        # Debug information about user-defined risks
+                        if not user_high_risk_items.empty:
+                            st.success(f"Found {len(user_high_risk_items)} user-defined high/critical risks")
+                    
+                    # Combine both sets of high risk items
+                    all_high_risk_items = pd.concat([std_high_risk_items, user_high_risk_items]).drop_duplicates()
+                    
+                    if not all_high_risk_items.empty:
+                        # Check if URisk ID column exists
+                        display_columns = ['Issue Key', 'Summary', 'Assignee', 'Priority', 'Status', 'Due Date']
+                        
+                        # Add the URisk ID column if it exists
+                        if 'Risk Issue Key' in all_high_risk_items.columns:
+                            # Create a combined display dataframe with URisk ID column
+                            display_df = all_high_risk_items.copy()
+                            display_df['URisk ID'] = display_df['Risk Issue Key']
+                            display_columns = ['Issue Key', 'URisk ID', 'Summary', 'Assignee', 'Priority', 'Status', 'Due Date'] 
+                            st.dataframe(display_df[display_columns], use_container_width=True)
+                        else:
+                            st.dataframe(all_high_risk_items[display_columns], use_container_width=True)
                     else:
                         st.success("No high-risk items found with current filters.")
                 else:

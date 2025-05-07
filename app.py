@@ -3661,7 +3661,8 @@ if nav_selection == "🎯 Resource Management":
             assignee_counts.columns = ['Assignee', 'Task Count']
             
             # Get active task counts
-            active_counts = filtered_issues_df[filtered_issues_df['Status'] != 'Done']['Assignee'].value_counts().reset_index()
+            active_issues = filtered_issues_df[filtered_issues_df['Status'] != 'Done']
+            active_counts = active_issues['Assignee'].value_counts().reset_index()
             active_counts.columns = ['Assignee', 'Active Tasks']
             
             # Merge with worklog data if available
@@ -3674,23 +3675,106 @@ if nav_selection == "🎯 Resource Management":
                 workload_analysis = pd.merge(workload_analysis, workloads, on='Assignee', how='left')
                 workload_analysis = workload_analysis.fillna(0)
                 
-                # Calculate workload metrics
-                team_avg_tasks = workload_analysis['Task Count'].mean()
-                workload_analysis['Overloaded'] = workload_analysis['Active Tasks'] > team_avg_tasks * 1.2
+                # Calculate work hours needed based on remaining story points or estimates
+                # First create a map of assignees to their estimated remaining work
+                remaining_work = {}
+                
+                for _, task in active_issues.iterrows():
+                    assignee = task['Assignee']
+                    story_points = task.get('Story Points', 0)
+                    original_estimate = task.get('Original Estimate (days)', 0)
+                    
+                    # Convert to hours - prefer story points if available
+                    hours_needed = 0
+                    if pd.notna(story_points) and story_points > 0:
+                        # Convert story points to hours (assuming 1 point = 8 hours)
+                        hours_needed = story_points * 8
+                    elif pd.notna(original_estimate) and original_estimate > 0:
+                        # Convert days to hours (8 hours per day)
+                        hours_needed = original_estimate * 8
+                    
+                    if assignee not in remaining_work:
+                        remaining_work[assignee] = 0
+                    remaining_work[assignee] += hours_needed
+                
+                # Add remaining work hours to the workload analysis
+                workload_analysis['Remaining Work (hrs)'] = workload_analysis['Assignee'].apply(
+                    lambda x: remaining_work.get(x, 0)
+                )
+                
+                # Calculate capacity per resource
+                # Default capacity is 40 hours per week if no specific data is available
+                default_capacity = 40
+                
+                # Check if we have the Skills dataframe with time allocation
+                resource_capacity = {}
+                if 'skills_df' in locals() and skills_df is not None and 'Resource' in skills_df.columns:
+                    # If we have velocity factors in skills data, use them to adjust capacity
+                    if 'Velocity Factor' in skills_df.columns:
+                        for _, row in skills_df.iterrows():
+                            resource = row['Resource']
+                            velocity = row.get('Velocity Factor', 1.0)
+                            resource_capacity[resource] = default_capacity * velocity
+                
+                # Check if we have resource costs data with time allocation
+                if leaves_df is not None and 'Resource' in leaves_df.columns:
+                    # Calculate available hours by subtracting leave hours
+                    current_date = pd.Timestamp.now()
+                    for assignee in workload_analysis['Assignee']:
+                        # Filter leaves for this resource in the next sprint (assuming 2 weeks)
+                        sprint_end = current_date + pd.Timedelta(days=14)
+                        assignee_leaves = leaves_df[
+                            (leaves_df['Resource'] == assignee) & 
+                            (leaves_df['Start Date'] <= sprint_end) &
+                            (leaves_df['End Date'] >= current_date)
+                        ]
+                        
+                        # Calculate leave days that overlap with the sprint
+                        leave_days = 0
+                        for _, leave in assignee_leaves.iterrows():
+                            leave_start = max(leave['Start Date'], current_date)
+                            leave_end = min(leave['End Date'], sprint_end)
+                            leave_days += (leave_end - leave_start).days + 1
+                        
+                        # Subtract leave hours from capacity (8 hours per day)
+                        leave_hours = leave_days * 8
+                        base_capacity = resource_capacity.get(assignee, default_capacity)
+                        resource_capacity[assignee] = max(0, base_capacity - leave_hours)
+                
+                # Add capacity to workload analysis
+                workload_analysis['Capacity (hrs)'] = workload_analysis['Assignee'].apply(
+                    lambda x: resource_capacity.get(x, default_capacity)
+                )
+                
+                # Calculate loading percentage
+                workload_analysis['Loading (%)'] = (workload_analysis['Remaining Work (hrs)'] / 
+                                                  workload_analysis['Capacity (hrs)'] * 100).round(1)
+                
+                # Calculate overload based on loading percentage
+                workload_analysis['Overloaded'] = workload_analysis['Loading (%)'] > 100
                 
                 # Identify overloaded resources
                 overloaded = workload_analysis[workload_analysis['Overloaded']]
                 if not overloaded.empty:
-                    st.warning(f"⚠️ {len(overloaded)} team members are overloaded compared to team average.")
+                    st.warning(f"⚠️ {len(overloaded)} team members are overloaded (loading > 100%).")
                 
-                # Display workload table with visual indicators
-                def highlight_overload(val):
-                    if val == True:
+                # Display workload table with visual indicators for loading percentage
+                def highlight_loading(val):
+                    if pd.isna(val):
+                        return ''
+                    elif val > 100:  # Overloaded
                         return 'background-color: #ffcccc'
-                    return ''
+                    elif val > 80:   # At capacity
+                        return 'background-color: #ffffcc'
+                    else:            # Underloaded
+                        return 'background-color: #ccffcc'
+                
+                # Apply formatting
+                styled_df = workload_analysis.copy()
+                styled_df['Loading (%)'] = styled_df['Loading (%)'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
                 
                 st.dataframe(
-                    workload_analysis.style.applymap(highlight_overload, subset=['Overloaded']),
+                    workload_analysis.style.applymap(highlight_loading, subset=['Loading (%)']),
                     use_container_width=True
                 )
                 
@@ -3703,11 +3787,86 @@ if nav_selection == "🎯 Resource Management":
                     barmode='group',
                     color_discrete_sequence=['#FF9999', '#99CCFF'],
                     labels={'value': 'Tasks', 'variable': 'Type'},
-                    title="Team Workload Distribution"
+                    title="Team Workload Distribution (Task Counts)"
                 )
                 st.plotly_chart(fig, use_container_width=True, key="plotly_13508bf08369")
                 
-                # Add hours distribution chart
+                # Add loading percentage chart - most important for resource management
+                st.subheader("Resource Loading Analysis")
+                
+                # Create a better color map based on loading values
+                colors = []
+                for loading in workload_analysis['Loading (%)']:
+                    if loading > 100:  # Overloaded
+                        colors.append('#FF5252')  # Red
+                    elif loading > 80:  # At capacity
+                        colors.append('#FFC107')  # Amber/Yellow
+                    else:  # Underloaded
+                        colors.append('#4CAF50')  # Green
+                
+                fig = px.bar(
+                    workload_analysis.sort_values('Loading (%)', ascending=False),
+                    x='Assignee',
+                    y='Loading (%)',
+                    title="Resource Loading (Work Hours vs. Capacity)",
+                    text='Loading (%)',
+                    color='Loading (%)',
+                    color_continuous_scale=[(0, "green"), (0.8, "yellow"), (1.0, "red")],
+                    range_color=[0, 150]
+                )
+                
+                # Add horizontal reference lines for capacity thresholds
+                fig.add_shape(
+                    type="line",
+                    x0=-0.5,
+                    x1=len(workload_analysis['Assignee']) - 0.5,
+                    y0=100,
+                    y1=100,
+                    line=dict(color="red", width=2, dash="dash"),
+                    name="100% Capacity"
+                )
+                
+                fig.add_shape(
+                    type="line",
+                    x0=-0.5,
+                    x1=len(workload_analysis['Assignee']) - 0.5,
+                    y0=80,
+                    y1=80,
+                    line=dict(color="orange", width=2, dash="dash"),
+                    name="80% Capacity"
+                )
+                
+                # Customize text position and format
+                fig.update_traces(
+                    texttemplate='%{y:.1f}%',
+                    textposition='outside'
+                )
+                
+                # Update layout for better visualization
+                fig.update_layout(
+                    yaxis=dict(
+                        title="Loading Percentage",
+                        range=[0, max(workload_analysis['Loading (%)']) * 1.1]  # Add 10% padding at top
+                    )
+                )
+                
+                st.plotly_chart(fig, use_container_width=True, key="plotly_resource_loading")
+                
+                # Add work vs capacity chart
+                st.subheader("Work vs. Capacity Analysis")
+                fig = px.bar(
+                    workload_analysis,
+                    x='Assignee',
+                    y=['Remaining Work (hrs)', 'Capacity (hrs)'],
+                    barmode='group',
+                    color_discrete_sequence=['#FF9999', '#99CCFF'],
+                    labels={'value': 'Hours', 'variable': 'Type'},
+                    title="Remaining Work vs. Available Capacity (Hours)"
+                )
+                
+                st.plotly_chart(fig, use_container_width=True, key="plotly_work_vs_capacity")
+                
+                # Add hours logged distribution chart 
                 st.subheader("Hours Logged Distribution")
                 fig = px.bar(
                     workload_analysis.sort_values('Hours Logged', ascending=False),
@@ -3719,22 +3878,76 @@ if nav_selection == "🎯 Resource Management":
                 )
                 st.plotly_chart(fig, use_container_width=True, key="plotly_dafc2b59adaf")
                 
-                # Add information section with recommendations
+                # Add information section with recommendations based on loading percentage
                 st.subheader("Workload Optimization Recommendations")
-                if not overloaded.empty:
-                    # Find underloaded resources
-                    underloaded = workload_analysis[workload_analysis['Active Tasks'] < team_avg_tasks * 0.8]
+                
+                # Find overloaded and underloaded resources based on loading percentage
+                overloaded_resources = workload_analysis[workload_analysis['Loading (%)'] > 100]
+                underloaded_resources = workload_analysis[workload_analysis['Loading (%)'] < 80]
+                
+                # We no longer need the team_avg_tasks variable since we're using loading percentages now
+                
+                if not overloaded_resources.empty:
+                    # Format the overloaded resources with their loading percentages
+                    overloaded_list = []
+                    for _, row in overloaded_resources.iterrows():
+                        overloaded_list.append(f"{row['Assignee']} ({row['Loading (%)']:.1f}%)")
                     
-                    if not underloaded.empty:
-                        st.info(f"💡 Consider redistributing tasks from overloaded resources ({', '.join(overloaded['Assignee'])}) to resources with capacity ({', '.join(underloaded['Assignee'])}).")
+                    if not underloaded_resources.empty:
+                        # Format the underloaded resources with their loading percentages
+                        underloaded_list = []
+                        for _, row in underloaded_resources.iterrows():
+                            underloaded_list.append(f"{row['Assignee']} ({row['Loading (%)']:.1f}%)")
+                        
+                        st.info(f"""💡 **Workload Redistribution Recommendation**
+                        
+Consider redistributing tasks from overloaded resources to resources with available capacity:
+- **Overloaded resources:** {', '.join(overloaded_list)}
+- **Resources with capacity:** {', '.join(underloaded_list)}
+                        
+This would help balance the team's workload and reduce the risk of missed deadlines.
+                        """)
                         
                         # Add a button to view detailed redistribution recommendations
                         if st.button("View AI Task Redistribution Recommendations"):
                             st.session_state['view_redistribution'] = True
                     else:
-                        st.info("💡 The team is unevenly loaded, but there are no significantly underloaded resources. Consider adjusting sprint commitments or bringing in additional resources.")
+                        st.warning(f"""⚠️ **Critical Capacity Alert**
+                        
+The team has {len(overloaded_resources)} overloaded resources ({', '.join(overloaded_list)}), but no underloaded resources to help.
+
+**Recommended actions:**
+1. Consider bringing in additional resources to the team
+2. Negotiate with stakeholders to adjust scope or timelines
+3. Prioritize critical work and defer non-essential tasks
+                        """)
+                elif not underloaded_resources.empty:
+                    # Format the underloaded resources with their loading percentages
+                    underloaded_list = []
+                    for _, row in underloaded_resources.iterrows():
+                        underloaded_list.append(f"{row['Assignee']} ({row['Loading (%)']:.1f}%)")
+                    
+                    st.info(f"""💡 **Resource Utilization Opportunity**
+                    
+The team has resources with available capacity:
+- **Resources with capacity:** {', '.join(underloaded_list)}
+
+**Recommended actions:**
+1. Bring forward work from the backlog to maximize team utilization
+2. Allocate more technical debt items to these resources
+3. Assign these resources to support overloaded team members for knowledge sharing
+                    """)
                 else:
-                    st.success("✅ The team has a balanced workload distribution.")
+                    at_capacity = workload_analysis[(workload_analysis['Loading (%)'] >= 80) & (workload_analysis['Loading (%)'] <= 100)]
+                    
+                    if not at_capacity.empty:
+                        st.success("""✅ **Optimal Team Loading**
+                        
+The team has a well-balanced workload with all members operating at efficient capacity (80-100%).
+This is an ideal loading level that maximizes productivity while maintaining quality.
+                        """)
+                    else:
+                        st.success("✅ The team has a balanced workload distribution.")
             else:
                 st.warning("Worklog data not available or missing required columns.")
         else:

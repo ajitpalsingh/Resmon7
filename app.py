@@ -90,39 +90,16 @@ with st.sidebar:
         else:
             logo_path = "logo_AI_PM_Buddy.png"
             
-        # Check for logo in multiple possible locations
-        possible_locations = [
-            logo_path,                                 # Root directory
-            os.path.join('.', logo_path),             # Explicit current directory
-            os.path.join('assets', logo_path),        # In assets folder
-            os.path.join('attached_assets', logo_path) # In attached_assets folder
-        ]
-        
-        logo_found = False
-        for location in possible_locations:
-            if os.path.exists(location):
-                st.image(location, width=180)
-                logo_found = True
-                break
-                
-        if not logo_found:
+        # Check if logo file exists
+        if os.path.exists(logo_path):
+            st.image(logo_path, width=180)
+        else:
             # If preferred theme logo not found, try the other logo
             alternate_logo = "logo_AI_PM_Buddy.png" if logo_path == "logo_AI_PM_Buddy_dark.png" else "logo_AI_PM_Buddy_dark.png"
-            
-            # Check alternate logo in multiple locations
-            for alt_location in [
-                alternate_logo,
-                os.path.join('.', alternate_logo),
-                os.path.join('assets', alternate_logo),
-                os.path.join('attached_assets', alternate_logo)
-            ]:
-                if os.path.exists(alt_location):
-                    st.image(alt_location, width=180)
-                    print(f"Using alternate logo: {alt_location}")
-                    logo_found = True
-                    break
-                    
-            if not logo_found:
+            if os.path.exists(alternate_logo):
+                st.image(alternate_logo, width=180)
+                print(f"Using alternate logo: {alternate_logo}")
+            else:
                 # If no logo files found, use emoji fallback
                 st.markdown("### 🤖📊")
                 st.info("Logo files not found")
@@ -197,37 +174,7 @@ font = "sans serif"
             uploaded_file = open(fallback_file, "rb")
             st.sidebar.success("Loaded default file: enriched_jira_data_with_simulated.xlsx")
 
-    # Deployment package download options - at the bottom of the sidebar
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("##### Application Downloads")
-    
-    # Check if zip files exist before showing download buttons
-    col1, col2 = st.sidebar.columns(2)
-    
-    cloud_zip_file_path = "ai_pm_buddy_cloud_deploy.zip"
-    if os.path.exists(cloud_zip_file_path):
-        with open(cloud_zip_file_path, "rb") as fp:
-            cloud_zip_data = fp.read()
-        col1.download_button(
-            label="☁️ Cloud Deploy",
-            data=cloud_zip_data,
-            file_name="ai_pm_buddy_cloud_deploy.zip",
-            mime="application/zip",
-            help="Download files for Streamlit Cloud deployment"
-        )
-
-    # Full deployment package
-    zip_file_path = "ai_pm_buddy_app.zip"
-    if os.path.exists(zip_file_path):
-        with open(zip_file_path, "rb") as fp:
-            zip_data = fp.read()
-        col2.download_button(
-            label="📦 Full Deploy",
-            data=zip_data,
-            file_name="ai_pm_buddy_app.zip",
-            mime="application/zip",
-            help="Download all project files for deployment"
-        )
+    # No deployment package section in sidebar
 
 # ---------- Load Data ----------
 # Initialize global variables

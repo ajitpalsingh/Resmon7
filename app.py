@@ -174,7 +174,37 @@ font = "sans serif"
             uploaded_file = open(fallback_file, "rb")
             st.sidebar.success("Loaded default file: enriched_jira_data_with_simulated.xlsx")
 
-    # No deployment package section in sidebar
+    # Deployment package download options - at the bottom of the sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("##### Application Downloads")
+    
+    # Check if zip files exist before showing download buttons
+    col1, col2 = st.sidebar.columns(2)
+    
+    cloud_zip_file_path = "ai_pm_buddy_cloud_deploy.zip"
+    if os.path.exists(cloud_zip_file_path):
+        with open(cloud_zip_file_path, "rb") as fp:
+            cloud_zip_data = fp.read()
+        col1.download_button(
+            label="☁️ Cloud Deploy",
+            data=cloud_zip_data,
+            file_name="ai_pm_buddy_cloud_deploy.zip",
+            mime="application/zip",
+            help="Download files for Streamlit Cloud deployment"
+        )
+
+    # Full deployment package
+    zip_file_path = "ai_pm_buddy_app.zip"
+    if os.path.exists(zip_file_path):
+        with open(zip_file_path, "rb") as fp:
+            zip_data = fp.read()
+        col2.download_button(
+            label="📦 Full Deploy",
+            data=zip_data,
+            file_name="ai_pm_buddy_app.zip",
+            mime="application/zip",
+            help="Download all project files for deployment"
+        )
 
 # ---------- Load Data ----------
 # Initialize global variables
@@ -223,6 +253,97 @@ def get_color_palette():
         }
 
 # Function to create consistent Plotly chart styling
+def safe_add_vline(fig, x, **kwargs):
+    """Safe method to add vertical lines to Plotly figures that works around add_vline issues"""
+    try:
+        # First attempt: Try the standard add_vline method
+        fig.add_vline(x=x, **kwargs)
+    except Exception as e:
+        # Fallback: Add a scatter trace instead
+        for i in range(len(fig.data)):
+            try:
+                y_range = fig.layout.yaxis.range
+                if not y_range:
+                    y_range = [0, 1]  # Default range if none is set
+            except:
+                y_range = [0, 1]  # Default fallback
+                
+            # Add a line as a scatter trace
+            fig.add_trace(
+                go.Scatter(
+                    x=[x, x],
+                    y=[y_range[0], y_range[1]],
+                    mode='lines',
+                    line=dict(
+                        color=kwargs.get('line_color', 'red'),
+                        width=kwargs.get('line_width', 1),
+                        dash=kwargs.get('line_dash', 'solid')
+                    ),
+                    showlegend=False,
+                    hoverinfo='none'
+                )
+            )
+            break  # Just add one trace
+    return fig
+
+def safe_line_chart(data_frame, x, y, **kwargs):
+    """Safe method to create line charts that works around px.line issues"""
+    try:
+        # First attempt: Try the standard px.line method
+        fig = px.line(data_frame, x=x, y=y, **kwargs)
+        return fig
+    except ValueError as e:
+        # Fallback: Create a manual line chart using go.Figure and go.Scatter
+        fig = go.Figure()
+        
+        # Get the color sequence
+        colors = get_color_palette()
+        color_sequence = kwargs.get('color_discrete_sequence', colors['categorical'])
+        
+        # Check if we're using a color column
+        if 'color' in kwargs:
+            color_col = kwargs['color']
+            # Get unique values in the color column
+            color_groups = data_frame[color_col].unique()
+            
+            # Add a trace for each color group
+            for i, group in enumerate(color_groups):
+                group_data = data_frame[data_frame[color_col] == group]
+                color_idx = i % len(color_sequence)
+                
+                # Add scatter trace with lines and markers
+                fig.add_trace(go.Scatter(
+                    x=group_data[x],
+                    y=group_data[y],
+                    mode='lines+markers' if kwargs.get('markers', False) else 'lines',
+                    name=str(group),
+                    line=dict(color=color_sequence[color_idx]),
+                    marker=dict(color=color_sequence[color_idx])
+                ))
+        else:
+            # Simple line chart without color groups
+            fig.add_trace(go.Scatter(
+                x=data_frame[x],
+                y=data_frame[y],
+                mode='lines+markers' if kwargs.get('markers', False) else 'lines',
+                line=dict(color=color_sequence[0]),
+                marker=dict(color=color_sequence[0])
+            ))
+        
+        # Apply title if provided
+        if 'title' in kwargs:
+            fig.update_layout(title=kwargs['title'])
+            
+        # Apply proper labels
+        x_label = kwargs.get('labels', {}).get(x, x) if 'labels' in kwargs else x
+        y_label = kwargs.get('labels', {}).get(y, y) if 'labels' in kwargs else y
+        fig.update_layout(
+            xaxis_title=x_label,
+            yaxis_title=y_label
+        )
+        
+        return fig
+
 def style_plotly_chart(fig, title=None, height=None):
     """Apply consistent styling to Plotly charts based on current theme"""
     colors = get_color_palette()
@@ -528,7 +649,7 @@ if nav_selection == "📊 Dashboard":
                 fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor=colors['grid'])
                 fig.update_xaxes(showgrid=False)
                 
-                st.plotly_chart(fig, use_container_width=True, key="plotly_fzpjqnmtp7")
+                st.plotly_chart(fig, use_container_width=True, key="plotly_bd5ebd859556")
                 
                 # Priority distribution
                 st.subheader("Task Priority Distribution")
@@ -611,7 +732,7 @@ if nav_selection == "📊 Dashboard":
                         )
                     )
                     
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_7vgkurtisa")
+                    st.plotly_chart(fig, use_container_width=True, key="plotly_1062c0dbdc9c")
                 
             else:
                 st.warning("No data available with current filters.")
@@ -756,7 +877,7 @@ if nav_selection == "📊 Dashboard":
                             ay=-40
                         )
                         
-                        st.plotly_chart(fig, use_container_width=True, key="plotly_ghniio60qx")
+                        st.plotly_chart(fig, use_container_width=True, key="plotly_7eaef315bd5c")
                 
                 # Traffic Light Matrix
                 st.subheader("🚦 Traffic Light Matrix - Task Status")
@@ -830,7 +951,7 @@ if nav_selection == "📊 Dashboard":
                             fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor=colors['grid'])
                             fig.update_xaxes(showgrid=False)
                             
-                            st.plotly_chart(fig, use_container_width=True, key="plotly_36ebpkjdkr")
+                            st.plotly_chart(fig, use_container_width=True, key="plotly_b0270a8601f8")
                         else:
                             st.info("No worklog data available with current filters.")
                     else:
@@ -902,7 +1023,7 @@ if nav_selection == "📊 Dashboard":
                                     fig.update_xaxes(range=x_range)
                                     fig.update_yaxes(range=y_range)
                                 
-                                st.plotly_chart(fig, use_container_width=True, key="plotly_bn2mixjh17")
+                                st.plotly_chart(fig, use_container_width=True, key="plotly_81ae55c62df1")
                             else:
                                 st.info("Insufficient data for bubble chart with current filters.")
                         else:
@@ -978,7 +1099,8 @@ if nav_selection == "📊 Dashboard":
                     )
                     
                     # Add a vertical line for today
-                    fig.add_vline(
+                    # Use our safe add_vline method to avoid Plotly errors
+                    safe_add_vline(fig,
                         x=today, 
                         line_width=2, 
                         line_dash="dash", 
@@ -987,7 +1109,7 @@ if nav_selection == "📊 Dashboard":
                         annotation_position="top right"
                     )
                     
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_35ay72f7xe")
+                    st.plotly_chart(fig, use_container_width=True, key="plotly_141c0ffb59b0")
                 else:
                     st.warning("No tasks with valid start and due dates available with current filters.")
             else:
@@ -1056,7 +1178,7 @@ if nav_selection == "📊 Dashboard":
                     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor=colors['grid'])
                     fig.update_xaxes(showgrid=False)
                     
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_aqiwvgt4ip")
+                    st.plotly_chart(fig, use_container_width=True, key="plotly_7e339947194e")
                     
                     # Task List
                     st.subheader("Sprint Tasks")
@@ -1151,7 +1273,7 @@ if nav_selection == "📊 Dashboard":
                                     font=dict(color=colors['warning'])
                                 )
                         
-                        st.plotly_chart(fig, use_container_width=True, key="plotly_8kgj6v7t9i")
+                        st.plotly_chart(fig, use_container_width=True, key="plotly_fb769d98f52f")
                     else:
                         st.info("No worklog data with current filters.")
                 else:
@@ -1238,7 +1360,7 @@ if nav_selection == "📊 Dashboard":
                             )
                         )
                         
-                        st.plotly_chart(fig, use_container_width=True, key="plotly_650ug1zzth")
+                        st.plotly_chart(fig, use_container_width=True, key="plotly_ffc04150db42")
                     else:
                         st.info("No date-based worklog data available with current filters.")
                 else:
@@ -1291,7 +1413,7 @@ if nav_selection == "📊 Dashboard":
                     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor=colors['grid'])
                     fig.update_xaxes(showgrid=False)
                     
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_450r6f2qch")
+                    st.plotly_chart(fig, use_container_width=True, key="plotly_e6be6e48248e")
                     
                     # Radar Chart for Each Skill Category
                     for skill_category in skillsets:
@@ -1332,7 +1454,7 @@ if nav_selection == "📊 Dashboard":
                             fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor=colors['grid'], title="Number of Skills")
                             fig.update_xaxes(showgrid=False, title="Team Member")
                             
-                            st.plotly_chart(fig, use_container_width=True, key="plotly_loa1kjj9eq")
+                            st.plotly_chart(fig, use_container_width=True, key="plotly_9d7d1c291fcc")
                     
                     # Treemap of Resource Skills
                     st.subheader("Skill Distribution Treemap")
@@ -1363,7 +1485,7 @@ if nav_selection == "📊 Dashboard":
                         treemapcolorway=colors['categorical']
                     )
                     
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_551gkgaiz9")
+                    st.plotly_chart(fig, use_container_width=True, key="plotly_2eca974a2dc7")
                 else:
                     st.warning("Skills data missing required columns for visualization.")
             else:
@@ -3266,7 +3388,7 @@ if nav_selection == "🎯 Resource Management":
                     labels={'value': 'Tasks', 'variable': 'Type'},
                     title="Team Workload Distribution"
                 )
-                st.plotly_chart(fig, use_container_width=True, key="plotly_ly14yayfog")
+                st.plotly_chart(fig, use_container_width=True, key="plotly_13508bf08369")
                 
                 # Add hours distribution chart
                 st.subheader("Hours Logged Distribution")
@@ -3278,7 +3400,7 @@ if nav_selection == "🎯 Resource Management":
                     color_continuous_scale='RdYlGn_r',  # Reversed to show high hours in red
                     title="Hours Logged by Team Member"
                 )
-                st.plotly_chart(fig, use_container_width=True, key="plotly_bvt5qi6kot")
+                st.plotly_chart(fig, use_container_width=True, key="plotly_dafc2b59adaf")
                 
                 # Add information section with recommendations
                 st.subheader("Workload Optimization Recommendations")
@@ -3536,7 +3658,7 @@ elif nav_selection == "📆 Planning & Scheduling":
                             title="Project Timeline Overview"
                         )
                         fig.update_yaxes(autorange="reversed")
-                        st.plotly_chart(fig, use_container_width=True, key="plotly_cpgthn7z3a")
+                        st.plotly_chart(fig, use_container_width=True, key="plotly_bd7119b9ed22")
                         
                         # Add milestone markers
                         st.subheader("Critical Milestones")
@@ -3580,7 +3702,7 @@ elif nav_selection == "📆 Planning & Scheduling":
                                 title="Detailed Task Timeline"
                             )
                             fig.update_yaxes(autorange="reversed")
-                            st.plotly_chart(fig, use_container_width=True, key="plotly_uy9tv1kfhe")
+                            st.plotly_chart(fig, use_container_width=True, key="plotly_2d307f299d7e")
                     else:
                         st.warning("No Project field available for timeline grouping.")
                 else:
@@ -3611,7 +3733,8 @@ elif nav_selection == "📆 Planning & Scheduling":
                     st.subheader("Historical Velocity Trends")
                     
                     # Plot the velocity data
-                    fig = px.line(
+                    # Use our safe line chart method instead of px.line directly
+                    fig = safe_line_chart(
                         velocity_history_df,
                         x="Sprint",
                         y="Velocity",
@@ -3619,7 +3742,7 @@ elif nav_selection == "📆 Planning & Scheduling":
                         markers=True,
                         title="Historical Velocity by Team"
                     )
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_nlf3kkgiv9")
+                    st.plotly_chart(fig, use_container_width=True, key="plotly_3d8acca1346e")
                     
                     # Team member efficiency
                     st.subheader("Team Member Efficiency")
@@ -3635,7 +3758,7 @@ elif nav_selection == "📆 Planning & Scheduling":
                             title="Average Completion Rate by Team Member",
                             color_continuous_scale='RdYlGn'
                         )
-                        st.plotly_chart(fig, use_container_width=True, key="plotly_cm50ilh7r3")
+                        st.plotly_chart(fig, use_container_width=True, key="plotly_3a3eaf18ba9c")
                     
                     # Velocity forecast
                     st.subheader("Velocity Forecast")
@@ -3732,7 +3855,7 @@ elif nav_selection == "📆 Planning & Scheduling":
                             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
                         )
                         
-                        st.plotly_chart(fig, use_container_width=True, key="plotly_ywa130hapf")
+                        st.plotly_chart(fig, use_container_width=True, key="plotly_9404febdc7eb")
                         
                         # Add some insights
                         st.subheader("Velocity Insights")
@@ -3885,7 +4008,7 @@ elif nav_selection == "🚨 Risk Management":
                                            'Highest': 'darkred', 'Lowest': 'lightgreen'},
                         title="Risk Level Distribution"
                     )
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_xt7crdbr1m")
+                    st.plotly_chart(fig, use_container_width=True, key="plotly_34985f4a9cdd")
                     
                     # Risk status chart
                     st.subheader("Risk Status")
@@ -3898,7 +4021,7 @@ elif nav_selection == "🚨 Risk Management":
                             status_risk,
                             title="Risk Status Distribution"
                         )
-                        st.plotly_chart(fig, use_container_width=True, key="plotly_7cohlb1mps")
+                        st.plotly_chart(fig, use_container_width=True, key="plotly_3985e0eafcae")
                     
                     # Risk over time
                     st.subheader("Risk Trend")
@@ -3912,11 +4035,14 @@ elif nav_selection == "🚨 Risk Management":
                             monthly_risks = monthly_risks.sort_index()  # Sort by month
                             
                             # Visualize trend
-                            fig = px.line(
+                            # Use our safe line chart function instead of px.line
+                            fig = safe_line_chart(
                                 monthly_risks,
+                                x=monthly_risks.index,
+                                y=monthly_risks.columns.tolist(),
                                 title="Risk Trend Over Time"
                             )
-                            st.plotly_chart(fig, use_container_width=True, key="plotly_vkplk4ocuu")
+                            st.plotly_chart(fig, use_container_width=True, key="plotly_a19e9a73bd9e")
                         else:
                             st.info("No date data available for trend visualization.")
                 else:
@@ -3953,7 +4079,7 @@ elif nav_selection == "🚨 Risk Management":
                         color_continuous_scale='RdYlGn_r',  # Reversed to show high risks in red
                         title="Average Risk Score by Project"
                     )
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_mzv4s144ve")
+                    st.plotly_chart(fig, use_container_width=True, key="plotly_9e53f825ebb9")
                     
                     # Show the heatmap
                     st.subheader("Risk Distribution by Project")
@@ -3962,7 +4088,7 @@ elif nav_selection == "🚨 Risk Management":
                         labels=dict(x="Priority", y="Project", color="Count"),
                         title="Risk Heatmap by Project"
                     )
-                    st.plotly_chart(fig, use_container_width=True, key="plotly_2an5ynd2ko")
+                    st.plotly_chart(fig, use_container_width=True, key="plotly_c90b0ee0dca1")
                 
                 # Risk by assignee
                 if 'Assignee' in filtered_issues_df.columns and 'Priority' in filtered_issues_df.columns:
@@ -3996,7 +4122,7 @@ elif nav_selection == "🚨 Risk Management":
                             yaxis_title="Average Risk Score",
                             height=500
                         )
-                        st.plotly_chart(fig, use_container_width=True, key="plotly_vwmwpy1e5b")
+                        st.plotly_chart(fig, use_container_width=True, key="plotly_541fb20ee691")
                         
                         # Show the table of assignee risks
                         st.dataframe(assignee_scores, use_container_width=True)
@@ -4093,7 +4219,7 @@ elif nav_selection == "🚨 Risk Management":
                         fig.add_annotation(x=2, y=2, text="Minor Risks", showarrow=False, font=dict(size=12))
                         fig.add_annotation(x=4, y=2, text="Moderate Risks", showarrow=False, font=dict(size=12))
                         
-                        st.plotly_chart(fig, use_container_width=True, key="plotly_3jkxzo6q1q")
+                        st.plotly_chart(fig, use_container_width=True, key="plotly_d16ef4de1851")
                         
                         # Risk mitigation recommendations
                         st.subheader("Risk Mitigation Recommendations")
